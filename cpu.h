@@ -28,9 +28,13 @@ struct cpu_data
         } status;
     } m_registers;
 
+    uint8_t m_nmi : 1, __unused : 7;
+
     uint32_t m_remaining_cycles;
 
     void power_on(bus_t a_bus);
+
+    void nmi();
 
     void tick(bus_t a_bus);
 };

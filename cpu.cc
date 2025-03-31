@@ -404,16 +404,16 @@ static uint8_t opcode_read8(cpu_t a_cpu, bus_t a_bus, opcode_t a_opcode)
     case CPU_ADDRESSING_MODE_INDIRECT_INDEXED:
     {
         uint16_t addr = a_bus->read8(a_cpu, a_cpu->m_registers.pc + 1);
-        addr = a_bus->read16(a_cpu, addr);
-        addr = addr + a_cpu->m_registers.y;
-
+        uint16_t base_addr = a_bus->read16(a_cpu, addr);
+        uint16_t final_addr = base_addr + a_cpu->m_registers.y;
+    
         // Add one cycle if page boundary is crossed
-        if ((addr & 0xFF00) != ((addr + a_cpu->m_registers.y) & 0xFF00))
+        if ((base_addr & 0xFF00) != (final_addr & 0xFF00))
         {
             a_cpu->m_remaining_cycles++;
         }
-
-        value = a_bus->read8(a_cpu, addr);
+    
+        value = a_bus->read8(a_cpu, final_addr);
     }
     break;
     default:
@@ -474,7 +474,7 @@ static void opcode_write8(cpu_t a_cpu, bus_t a_bus, opcode_t a_opcode, uint8_t a
     break;
     case CPU_ADDRESSING_MODE_INDEXED_INDIRECT:
     {
-        uint8_t addr = a_bus->read8(a_cpu, a_cpu->m_registers.pc + 1);
+        uint16_t addr = a_bus->read8(a_cpu, a_cpu->m_registers.pc + 1);
         addr = (addr + a_cpu->m_registers.x) & 0xFF;
         addr = a_bus->read16(a_cpu, addr);
         a_bus->write8(a_cpu, addr, a_value);
@@ -482,10 +482,11 @@ static void opcode_write8(cpu_t a_cpu, bus_t a_bus, opcode_t a_opcode, uint8_t a
     break;
     case CPU_ADDRESSING_MODE_INDIRECT_INDEXED:
     {
-        uint8_t addr = a_bus->read8(a_cpu, a_cpu->m_registers.pc + 1);
-        addr = a_bus->read16(a_cpu, addr);
-        addr = addr + a_cpu->m_registers.y;
-        a_bus->write8(a_cpu, addr, a_value);
+        uint16_t addr = a_bus->read8(a_cpu, a_cpu->m_registers.pc + 1);
+        uint16_t base_addr = a_bus->read16(a_cpu, addr);
+        uint16_t final_addr = base_addr + a_cpu->m_registers.y;
+    
+        a_bus->write8(a_cpu, final_addr, a_value);
     }
     break;
     default:
@@ -525,27 +526,41 @@ static void opcode_branch(cpu_t a_cpu, bus_t a_bus, opcode_t a_opcode)
 
 static void opcode_push_stack8(cpu_t a_cpu, bus_t a_bus, uint8_t a_value)
 {
-    a_cpu->m_registers.s--;
     a_bus->write8(a_cpu, 0x0100 + a_cpu->m_registers.s, a_value);
+    a_cpu->m_registers.s--;
 }
 
 static void opcode_push_stack16(cpu_t a_cpu, bus_t a_bus, uint16_t a_value)
 {
-    a_cpu->m_registers.s -= 2;
-    a_bus->write16(a_cpu, 0x0100 + a_cpu->m_registers.s, a_value);
+    // Push high byte first
+    a_bus->write8(a_cpu, 0x0100 + a_cpu->m_registers.s, a_value >> 8);
+    a_cpu->m_registers.s--;
+
+    // Push low byte next
+    a_bus->write8(a_cpu, 0x0100 + a_cpu->m_registers.s, a_value & 0xFF);
+    a_cpu->m_registers.s--;
+
 }
 
 static uint8_t opcode_pop_stack8(cpu_t a_cpu, bus_t a_bus)
 {
-    uint8_t value = a_bus->read8(a_cpu, 0x0100 + a_cpu->m_registers.s);
     a_cpu->m_registers.s++;
+    
+    uint8_t value = a_bus->read8(a_cpu, 0x0100 + a_cpu->m_registers.s);
+    
     return value;
 }
 
 static uint16_t opcode_pop_stack16(cpu_t a_cpu, bus_t a_bus)
 {
-    uint16_t value = a_bus->read16(a_cpu, 0x0100 + a_cpu->m_registers.s);
-    a_cpu->m_registers.s += 2;
+    a_cpu->m_registers.s++;
+    
+    uint16_t value = a_bus->read8(a_cpu, 0x0100 + a_cpu->m_registers.s);
+
+    a_cpu->m_registers.s++;
+    
+    value |= ((uint16_t)a_bus->read8(a_cpu, 0x0100 + a_cpu->m_registers.s)) << 8;
+
     return value;
 }
 
@@ -646,8 +661,16 @@ static void opcode_bpl(cpu_t a_cpu, bus_t a_bus, opcode_t a_opcode)
 
 static void opcode_brk(cpu_t a_cpu, bus_t a_bus, opcode_t a_opcode)
 {
-    opcode_push_stack16(a_cpu, a_bus, a_cpu->m_registers.pc + a_opcode->length);
+    // Push PC+2 onto the stack
+    opcode_push_stack16(a_cpu, a_bus, a_cpu->m_registers.pc + 2);
+
+    // Push status with B flag set
     opcode_push_stack8(a_cpu, a_bus, a_cpu->m_registers.status.raw | CPU_FLAG_BREAK);
+
+    // Set interrupt disable flag
+    a_cpu->m_registers.status.flag.i = 1;
+
+    // Compensate for the automatic PC increment in cpu_data::tick
     a_cpu->m_registers.pc = a_bus->read16(a_cpu, 0xFFFE) - a_opcode->length;
 }
 
@@ -783,7 +806,15 @@ static void opcode_jmp(cpu_t a_cpu, bus_t a_bus, opcode_t a_opcode)
     else /* if (a_opcode->mode == CPU_ADDRESSING_MODE_INDIRECT) */
     {
         uint16_t addr = a_bus->read16(a_cpu, a_cpu->m_registers.pc + 1);
-        a_cpu->m_registers.pc = a_bus->read16(a_cpu, addr);
+        
+        // Simulate 6502 JMP indirect bug: if address is $xxFF, fetch second byte from $xx00, not $xx+1:00
+        if ((addr & 0xFF) == 0xFF) {
+            uint8_t lo = a_bus->read8(a_cpu, addr);
+            uint8_t hi = a_bus->read8(a_cpu, addr & 0xFF00); // Wrap to same page
+            a_cpu->m_registers.pc = ((hi << 8) | lo) - a_opcode->length;
+        } else {
+            a_cpu->m_registers.pc = a_bus->read16(a_cpu, addr) - a_opcode->length;
+        }
     }
 }
 
@@ -851,24 +882,28 @@ static void opcode_ora(cpu_t a_cpu, bus_t a_bus, opcode_t a_opcode)
 
 static void opcode_pha(cpu_t a_cpu, bus_t a_bus, opcode_t a_opcode)
 {
-    a_bus->write8(a_cpu, 0x0100 + (a_cpu->m_registers.s--), a_cpu->m_registers.a);
+    opcode_push_stack8(a_cpu, a_bus, a_cpu->m_registers.a);
 }
 
 static void opcode_php(cpu_t a_cpu, bus_t a_bus, opcode_t a_opcode)
 {
-    a_bus->write8(a_cpu, 0x0100 + (a_cpu->m_registers.s--), a_cpu->m_registers.status.raw);
+    // When pushing status to stack via PHP, both B flag and unused flag should be set
+    opcode_push_stack8(a_cpu, a_bus, a_cpu->m_registers.status.raw | CPU_FLAG_BREAK | CPU_FLAG_UNUSED);
 }
 
 static void opcode_pla(cpu_t a_cpu, bus_t a_bus, opcode_t a_opcode)
 {
-    a_cpu->m_registers.a = a_bus->read8(a_cpu, 0x0100 + (++a_cpu->m_registers.s));
+    a_cpu->m_registers.a = opcode_pop_stack8(a_cpu, a_bus);
+
+    // Set Z and N flags
     a_cpu->m_registers.status.flag.z = a_cpu->m_registers.a == 0;
     a_cpu->m_registers.status.flag.n = !!(a_cpu->m_registers.a >> 7);
 }
 
 static void opcode_plp(cpu_t a_cpu, bus_t a_bus, opcode_t a_opcode)
 {
-    a_cpu->m_registers.status.raw = a_bus->read8(a_cpu, 0x0100 + (++a_cpu->m_registers.s));
+    // When pulling status via PLP, B flag is ignored and kept as 0, unused flag is kept as 1
+    a_cpu->m_registers.status.raw = opcode_pop_stack8(a_cpu, a_bus);
 }
 
 static void opcode_rol(cpu_t a_cpu, bus_t a_bus, opcode_t a_opcode)
@@ -883,7 +918,11 @@ static void opcode_rol(cpu_t a_cpu, bus_t a_bus, opcode_t a_opcode)
     uint8_t remaining_cycles = a_cpu->m_remaining_cycles;
     
     opcode_write8(a_cpu, a_bus, a_opcode, value);
-    
+
+    // Set Z and N flags
+    a_cpu->m_registers.status.flag.z = value == 0;
+    a_cpu->m_registers.status.flag.n = !!(value >> 7);
+
     // Restore the cycle count
     a_cpu->m_remaining_cycles = remaining_cycles;
 }
@@ -900,6 +939,10 @@ static void opcode_ror(cpu_t a_cpu, bus_t a_bus, opcode_t a_opcode)
     uint8_t remaining_cycles = a_cpu->m_remaining_cycles;
     
     opcode_write8(a_cpu, a_bus, a_opcode, value);
+
+    // Set Z and N flags
+    a_cpu->m_registers.status.flag.z = value == 0;
+    a_cpu->m_registers.status.flag.n = !!(value >> 7);
     
     // Restore the cycle count
     a_cpu->m_remaining_cycles = remaining_cycles;
@@ -907,7 +950,9 @@ static void opcode_ror(cpu_t a_cpu, bus_t a_bus, opcode_t a_opcode)
 
 static void opcode_rti(cpu_t a_cpu, bus_t a_bus, opcode_t a_opcode)
 {
-    a_cpu->m_registers.status.raw = opcode_pop_stack8(a_cpu, a_bus);
+    // When pulling status via RTI, B flag is ignored and kept as 0, unused flag is kept as 1
+    uint8_t status = opcode_pop_stack8(a_cpu, a_bus);
+    a_cpu->m_registers.status.raw = (status & ~CPU_FLAG_BREAK) | CPU_FLAG_UNUSED;
     a_cpu->m_registers.pc = opcode_pop_stack16(a_cpu, a_bus);
 }
 
@@ -923,7 +968,8 @@ static void opcode_sbc(cpu_t a_cpu, bus_t a_bus, opcode_t a_opcode)
 
     a_cpu->m_registers.status.flag.c = !(result > 0xFF);
     a_cpu->m_registers.status.flag.z = (result & 0xFF) == 0;
-    a_cpu->m_registers.status.flag.v = !((a_cpu->m_registers.a ^ value) & (a_cpu->m_registers.a ^ result) & 0x80);
+    // Correct overflow flag calculation for SBC
+    a_cpu->m_registers.status.flag.v = !!((a_cpu->m_registers.a ^ value) & (a_cpu->m_registers.a ^ result) & 0x80);
     a_cpu->m_registers.status.flag.n = !!(result & 0x80);
 
     a_cpu->m_registers.a = result & 0xFF;
@@ -1002,7 +1048,7 @@ static void opcode_tya(cpu_t a_cpu, bus_t a_bus, opcode_t a_opcode)
 static void opcode_inv(cpu_t a_cpu, bus_t a_bus, opcode_t a_opcode) 
 {
     // Invalid opcode
-    __asm__("int $3");
+    //__asm__("int $3");
 }
 
 static void (*g_opcode_handlers[])(cpu_t, bus_t, opcode_t) =
@@ -1043,15 +1089,222 @@ static void (*g_opcode_handlers[])(cpu_t, bus_t, opcode_t) =
 
 void cpu_data::power_on(bus_t a_bus)
 {
-    m_registers.a = m_registers.x = m_registers.y = m_registers.s = 0;
-    
-    opcode_push_stack16(this, a_bus, 0);
-    opcode_push_stack8(this, a_bus, 0);
+    m_registers.a = m_registers.x = m_registers.y = 0;
+
+    m_registers.s = 0xFD;
     
     m_registers.pc = a_bus->read16(this, 0xFFFC);
-    m_registers.status.raw = CPU_FLAG_INTERRUPT_DISABLE;
+    m_registers.status.raw = CPU_FLAG_INTERRUPT_DISABLE | CPU_FLAG_UNUSED;
+
+    m_nmi = 0;
 
     m_remaining_cycles = 0;
+}
+
+void cpu_data::nmi()
+{
+    m_nmi = 1;
+}
+
+#include <stdio.h>
+#include <string.h>
+static uint8_t trace_read8(bus_t a_bus, uint16_t addr) {
+    // Only read from RAM directly, not from device registers
+    if (addr < 0x2000 || (addr >= 0x6000 && addr < 0x8000) || addr >= 0x8000) {
+        return a_bus->read8(NULL, addr); // NULL for CPU to avoid triggering cycle side effects
+    } else {
+        // For PPU, APU, etc. registers, return a placeholder or last known value
+        return 0xEE; // Use a recognizable placeholder value
+    }
+}
+
+static uint16_t trace_read16(bus_t a_bus, uint16_t addr) {
+    return trace_read8(a_bus, addr) | (trace_read8(a_bus, addr + 1) << 8);
+}
+
+static void print_cpu_trace(cpu_t a_cpu, bus_t a_bus, opcode_t a_opcode, uint8_t opcode_number)
+{
+    // Format: $XXXX: XX XX XX  INST $ADDR = #$XX                 A:XX X:XX Y:XX S:XX
+    
+    char instruction[64] = {0};
+    char operands[32] = {0};
+    char value_str[32] = {0};
+    
+    // Format the instruction and operands based on addressing mode
+    uint8_t bytes[3] = {opcode_number, 0, 0};
+    char byte_str[12] = {0};
+    
+    // Get operand bytes
+    if (a_opcode->length >= 2) {
+        bytes[1] = trace_read8(a_bus, a_cpu->m_registers.pc + 1);
+    }
+    if (a_opcode->length >= 3) {
+        bytes[2] = trace_read8(a_bus, a_cpu->m_registers.pc + 2);
+    }
+    
+    // Format the byte string (like "8D 07 20")
+    sprintf(byte_str, "%02X", bytes[0]);
+    if (a_opcode->length >= 2) {
+        sprintf(byte_str + strlen(byte_str), " %02X", bytes[1]);
+    } else {
+        strcat(byte_str, "   ");
+    }
+    if (a_opcode->length >= 3) {
+        sprintf(byte_str + strlen(byte_str), " %02X", bytes[2]);
+    } else {
+        strcat(byte_str, "   ");
+    }
+    
+    // Format the operand string based on addressing mode
+    bool is_read_op = (strncmp(a_opcode->mnemonic, "LD", 2) == 0 || 
+                       strncmp(a_opcode->mnemonic, "AD", 2) == 0 ||
+                       strncmp(a_opcode->mnemonic, "CM", 2) == 0 ||
+                       strncmp(a_opcode->mnemonic, "BIT", 3) == 0 ||
+                       strncmp(a_opcode->mnemonic, "AND", 3) == 0 ||
+                       strncmp(a_opcode->mnemonic, "EOR", 3) == 0 ||
+                       strncmp(a_opcode->mnemonic, "ORA", 3) == 0 ||
+                       strncmp(a_opcode->mnemonic, "SBC", 3) == 0 ||
+                       strncmp(a_opcode->mnemonic, "LAX", 3) == 0);
+                       
+    bool is_write_op = (strncmp(a_opcode->mnemonic, "ST", 2) == 0);
+    
+    switch (a_opcode->mode) {
+        case CPU_ADDRESSING_MODE_IMPLIED:
+            strcpy(operands, "");
+            break;
+        case CPU_ADDRESSING_MODE_ACCUMULATOR:
+            strcpy(operands, "A");
+            break;
+        case CPU_ADDRESSING_MODE_IMMEDIATE:
+            sprintf(operands, "#$%02X", bytes[1]);
+            break;
+        case CPU_ADDRESSING_MODE_ZERO_PAGE:
+            sprintf(operands, "$%02X", bytes[1]);
+            // Add the value for read/write operations
+            if (is_read_op || is_write_op) {
+                sprintf(value_str, " = #$%02X", trace_read8(a_bus, bytes[1]));
+            }
+            break;
+        case CPU_ADDRESSING_MODE_ZERO_PAGE_X:
+            {
+                uint8_t addr = (bytes[1] + a_cpu->m_registers.x) & 0xFF;
+                sprintf(operands, "$%02X,X", bytes[1]);
+                // Add the value for read/write operations
+                if (is_read_op || is_write_op) {
+                    sprintf(value_str, " @ $%02X = #$%02X", addr, trace_read8(a_bus, addr));
+                }
+            }
+            break;
+        case CPU_ADDRESSING_MODE_ZERO_PAGE_Y:
+            {
+                uint8_t addr = (bytes[1] + a_cpu->m_registers.y) & 0xFF;
+                sprintf(operands, "$%02X,Y", bytes[1]);
+                // Add the value for read/write operations
+                if (is_read_op || is_write_op) {
+                    sprintf(value_str, " @ $%02X = #$%02X", addr, trace_read8(a_bus, addr));
+                }
+            }
+            break;
+        case CPU_ADDRESSING_MODE_RELATIVE:
+            {
+                int8_t offset = (int8_t)bytes[1];
+                uint16_t target = a_cpu->m_registers.pc + a_opcode->length + offset;
+                sprintf(operands, "$%04X", target);
+            }
+            break;
+        case CPU_ADDRESSING_MODE_ABSOLUTE:
+            {
+                uint16_t addr = (bytes[2] << 8) | bytes[1];
+                sprintf(operands, "$%04X", addr);
+                // Add the value for read/write operations
+                if (is_read_op || is_write_op) {
+                    sprintf(value_str, " = #$%02X", trace_read8(a_bus, addr));
+                }
+            }
+            break;
+        case CPU_ADDRESSING_MODE_ABSOLUTE_X:
+            {
+                uint16_t base_addr = (bytes[2] << 8) | bytes[1];
+                uint16_t addr = base_addr + a_cpu->m_registers.x;
+                sprintf(operands, "$%04X,X", base_addr);
+                // Add the value for read/write operations
+                if (is_read_op || is_write_op) {
+                    sprintf(value_str, " @ $%04X = #$%02X", addr, trace_read8(a_bus, addr));
+                }
+            }
+            break;
+        case CPU_ADDRESSING_MODE_ABSOLUTE_Y:
+            {
+                uint16_t base_addr = (bytes[2] << 8) | bytes[1];
+                uint16_t addr = base_addr + a_cpu->m_registers.y;
+                sprintf(operands, "$%04X,Y", base_addr);
+                // Add the value for read/write operations
+                if (is_read_op || is_write_op) {
+                    sprintf(value_str, " @ $%04X = #$%02X", addr, trace_read8(a_bus, addr));
+                }
+            }
+            break;
+        case CPU_ADDRESSING_MODE_INDIRECT:
+            {
+                uint16_t addr = (bytes[2] << 8) | bytes[1];
+                // Handle JMP indirect bug
+                uint16_t target;
+                if ((addr & 0xFF) == 0xFF) {
+                    uint8_t lo = trace_read8(a_bus, addr);
+                    uint8_t hi = trace_read8(a_bus, addr & 0xFF00);
+                    target = (hi << 8) | lo;
+                } else {
+                    target = trace_read16(a_bus, addr);
+                }
+                sprintf(operands, "($%04X)", addr);
+                sprintf(value_str, " = $%04X", target);
+            }
+            break;
+        case CPU_ADDRESSING_MODE_INDEXED_INDIRECT:
+            {
+                uint8_t zp = bytes[1];
+                uint8_t zp_x = (zp + a_cpu->m_registers.x) & 0xFF;
+                uint16_t addr = trace_read16(a_bus, zp_x);
+                sprintf(operands, "($%02X,X)", zp);
+                // Add the value for read/write operations
+                if (is_read_op || is_write_op) {
+                    sprintf(value_str, " @ $%04X = #$%02X", addr, trace_read8(a_bus, addr));
+                }
+            }
+            break;
+        case CPU_ADDRESSING_MODE_INDIRECT_INDEXED:
+            {
+                uint8_t zp = bytes[1];
+                uint16_t base_addr = trace_read16(a_bus, zp);
+                uint16_t addr = base_addr + a_cpu->m_registers.y;
+                sprintf(operands, "($%02X),Y", zp);
+                // Add the value for read/write operations
+                if (is_read_op || is_write_op) {
+                    sprintf(value_str, " @ $%04X = #$%02X", addr, trace_read8(a_bus, addr));
+                }
+            }
+            break;
+        default:
+            strcpy(operands, "???");
+            break;
+    }
+    
+    // Format the instruction with fixed width for alignment
+    if (strlen(operands) > 0) {
+        sprintf(instruction, "%s %s%s", a_opcode->mnemonic, operands, value_str);
+    } else {
+        sprintf(instruction, "%s%s", a_opcode->mnemonic, value_str);
+    }
+    
+    // Print the trace with proper spacing
+    printf("$%04X: %-8s %-45s A:%02X X:%02X Y:%02X S:%02X \n",
+           a_cpu->m_registers.pc,
+           byte_str,
+           instruction,
+           a_cpu->m_registers.a,
+           a_cpu->m_registers.x,
+           a_cpu->m_registers.y,
+           a_cpu->m_registers.s);
 }
 
 void cpu_data::tick(bus_t a_bus)
@@ -1062,9 +1315,26 @@ void cpu_data::tick(bus_t a_bus)
         return;
     }
 
+    if (m_nmi)
+    {
+        opcode_push_stack16(this, a_bus, m_registers.pc);
+        opcode_push_stack8(this, a_bus, m_registers.status.raw);
+
+        m_registers.status.flag.i = 1;
+        m_registers.pc = a_bus->read16(this, 0xFFFA);
+
+        m_nmi = 0;
+
+        m_remaining_cycles += 7 - 1;
+
+        return;
+    }
+
     uint8_t opcode_number = a_bus->read8(this, m_registers.pc);
 
     opcode_t opcode = &g_opcodes[opcode_number >> 4][opcode_number & 0xF];
+
+    //print_cpu_trace(this, a_bus, opcode, opcode_number);
 
     g_opcode_handlers[opcode_number](this, a_bus, opcode);
 

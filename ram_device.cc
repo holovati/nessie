@@ -74,3 +74,25 @@ uint16_t ram_device_size(bus_device_t a_device)
 
     return ram->m_size;
 }
+
+
+size_t ram_device_write_buffer(bus_device_t a_ram_device, uint16_t a_addr, const uint8_t *a_buffer, size_t a_size)
+{
+    ram_device_t ram = DEVICE_TO_RAM(a_ram_device);
+
+    size_t bytes_written = 0;
+
+    while (bytes_written < a_size)
+    {
+        if (a_addr >= ram->m_size) // Break if no more space in RAM
+        {
+            break;
+        }
+
+        ram->m_data[a_addr] = a_buffer[bytes_written];
+        a_addr++;
+        bytes_written++;
+    }
+
+    return bytes_written;
+}
