@@ -315,12 +315,12 @@ static void ppu_vram_fetch_tick(ppu_device_t a_ppu, cpu_t a_cpu)
             
             // Load new values into shift registers
             a_ppu->bg_shift_pat_lo |= a_ppu->pattern_data_low;
-            a_ppu->bg_shift_pat_hi |= a_ppu->pattern_address_high;
+            a_ppu->bg_shift_pat_hi |= a_ppu->pattern_data_high;
             
             // Determine attribute bits
-            uint8_t attribute_bits = ((a_ppu->at_data >> ((a_ppu->v >> 4) & 0x4 | (a_ppu->v >> 2) & 0x2)) & 0x3);
-            a_ppu->bg_shift_at_lo |= attribute_bits & 0x1 ? 0xFF : 0x00;
-            a_ppu->bg_shift_at_hi |= attribute_bits & 0x2 ? 0xFF : 0x00;
+            uint8_t attribute_bits = (a_ppu->at_data >> (((a_ppu->v >> 4) & 0x04) | ((a_ppu->v >> 2) & 0x02))) & 0x03;
+            a_ppu->bg_shift_at_lo |= (attribute_bits & 0x1) ? 0xFF : 0x00;
+            a_ppu->bg_shift_at_hi |= (attribute_bits & 0x2) ? 0xFF : 0x00;
         }
         
         // Pattern table high (data)
@@ -441,6 +441,12 @@ static void ppu_scanline_visible(ppu_device_t a_ppu, cpu_t a_cpu)
             uint8_t palette_hi = (a_ppu->bg_shift_at_hi & bit_mux) ? 2 : 0;
             bg_palette = palette_hi | palette_lo;
         }
+
+        if (!a_ppu->m_registers.mask.background_leftmost && (a_ppu->m_cycle <= 8)) 
+        {
+            // Disable background for leftmost 8 pixels
+            bg_pixel = 0;
+        }
         
         // (Add sprite pixel determination here)
         
@@ -451,22 +457,21 @@ static void ppu_scanline_visible(ppu_device_t a_ppu, cpu_t a_cpu)
         // (Add sprite priority logic here)
         
         // Get color from palette
-        uint16_t color_address = 0x3F00;
+        uint16_t color_address;
         if (final_pixel == 0) 
         {
-            // Background color
+            // Background color (universal background)
             color_address = 0x3F00;
         } 
         else 
         {
-            // Pixel color
+            // Palette entry
             color_address = 0x3F00 + (final_palette << 2) + final_pixel;
         }
         
         uint8_t color_value = a_ppu->m_palette[color_address & 0x1F];
-        
-        // Convert to RGB using the NES palette
 
+        // Convert to RGB using the NES palette
         a_ppu->frame[a_ppu->m_scanline][a_ppu->m_cycle - 1] = 
         {
             .r = s_nes_palette[color_value][0],
