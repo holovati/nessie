@@ -1,6 +1,6 @@
-#include <ncurses.h>
 #include <unistd.h>
 #include <stdlib.h>
+#include <stdio.h>
 #include <utime.h>
 #include <time.h>
 
@@ -75,9 +75,9 @@ int main()
     // Attach the PPU to the bus at address 0x2000.
     // The PPU registers are mirrored every 8 bytes from 0x2000 to 0x3FFF 
     bus.attach(ppu, 0x2000, 0x2000);
-
+    
     // Load the test ROM file
-    for (int test_idx = 0; test_idx < sizeof(s_test_rom_files) / sizeof(s_test_rom_files[0]); test_idx++)
+    for (size_t test_idx = 0; test_idx < sizeof(s_test_rom_files) / sizeof(s_test_rom_files[0]); test_idx++)
     {
         FILE *file = fopen(s_test_rom_files[test_idx], "rb");
         

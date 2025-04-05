@@ -7,7 +7,7 @@ void bus_data::initialize()
         m_device_map[i] = nullptr;
     }
 }
-
+            
 void bus_data::attach(bus_device_t a_device, uint16_t a_base, uint32_t a_size)
 {
     // TODO
@@ -20,7 +20,7 @@ void bus_data::attach(bus_device_t a_device, uint16_t a_base, uint32_t a_size)
     a_device->m_size = (a_size + PAGE_MASK) & ~PAGE_MASK;;
 
     // Attach the device to the bus
-    for (int page_number = a_base >> PAGE_SHIFT; page_number < (a_base + a_size) >> PAGE_SHIFT; page_number++)
+    for (uint16_t page_number = a_base >> PAGE_SHIFT; page_number < (a_base + a_size) >> PAGE_SHIFT; page_number++)
     {
         m_device_map[page_number] = a_device;
     }
