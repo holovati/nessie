@@ -25,8 +25,9 @@ $8000–$FFFF $8000   Usually cartridge ROM and mapper registers.
 */
 
 static char const  * const s_test_rom_files[] = {
-    "01-implied.nes",
-    "pacman.nes",
+    "test_roms/all_instrs.nes",
+    "test_roms/pacman.nes",
+    "test_roms/cpu.nes", // MAPPER 1
 };
 
 // Defines for flags 6
@@ -57,6 +58,8 @@ struct ines_header_data
 
 int main()
 {
+    setvbuf(stdout, NULL, _IONBF, 0); // Disable buffering for stdout
+
     struct cpu_data cpu;
     
     struct bus_data bus;
