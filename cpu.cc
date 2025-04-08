@@ -536,7 +536,6 @@ static void opcode_push_stack16(cpu_t a_cpu, bus_t a_bus, uint16_t a_value)
     // Push low byte next
     a_bus->write8(a_cpu, 0x0100 + a_cpu->m_registers.s, a_value & 0xFF);
     a_cpu->m_registers.s--;
-
 }
 
 static uint8_t opcode_pop_stack8(cpu_t a_cpu, bus_t a_bus)
@@ -1455,13 +1454,14 @@ void cpu_data::tick(bus_t a_bus)
     opcode_t opcode = &g_opcodes[opcode_number >> 4][opcode_number & 0xF];
 
 #if defined(DEBUG)
-    printf("%04X: %02X %s\n", m_registers.pc, opcode_number, opcode->mnemonic);
+    printf("$%04X: %02X %s\n", m_registers.pc, opcode_number, opcode->mnemonic);
     fflush(stdout); // Force the output to be written immediately
 
     if (opcode_number == 0x00)
     {
         printf("ZERO OPCODE\n");
         fflush(stdout);
+        asm("int $3");
     }
 #endif
 

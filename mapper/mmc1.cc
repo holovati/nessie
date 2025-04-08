@@ -10,6 +10,7 @@
 
 #define PRG_ROM_DEVICE_TO_MMC1(p) ((mmc1_t)(((char *)p) - offsetof(struct mmc1_data, m_prg_rom_device)))
 #define PPU_CHR_DEVICE_TO_MMC1(p) ((mmc1_t)(((char *)p) - offsetof(struct mmc1_data, m_ppu_chr_device)))
+#define MEMORY_BANK(sz) struct { uint8_t at[sz * 1024]; }
 
 /*
 +-------------------+-------------------------------+------------------------------------------------------------------------------------------------------------------+
@@ -54,9 +55,18 @@ typedef struct mmc1_data
 
     bus_device_t m_prg_ram; // 8 KiB of PRG RAM
 
-    uint8_t m_ppu_chr[0x20000]; // 128 KiB of CHR ROM/RAM (32 4 KiB banks) or (16 8 KiB banks)
+    union 
+    {
+        MEMORY_BANK(4) bank4k[32]; // 4 KiB banks
+        MEMORY_BANK(8) bank8k[16]; // 8 KiB banks
+    } m_chr_ram; // 128 KiB of CHR ROM/RAM (32 4 KiB banks) or (16 8 KiB banks)
 
-    uint8_t *m_prg_rom;
+    union 
+    {
+        MEMORY_BANK(16) bank16k[16]; // 16 KiB banks
+        MEMORY_BANK(32) bank32k[8];  // 32 KiB banks
+    } m_prg_rom; // 32 KiB of PRG ROM (8 4 KiB banks) or (4 8 KiB banks) total siz
+
     uint8_t m_prg_rom_16k_banks;
 
     union 
@@ -109,8 +119,7 @@ static uint8_t mmc1_prg_rom_read8(bus_device_t a_dev, cpu_t a_cpu, uint16_t a_ad
         {
             // switch 32 KB at $8000, ignoring low bit of bank number
             uint8_t bank = mmc1->m_prg_bank_register.prg_bank & ~0x1;
-
-            retval = mmc1->m_prg_rom[(bank * 0x8000) + (a_addr & 0x7FFF)];
+            retval = mmc1->m_prg_rom.bank32k[bank].at[a_addr & 0x7FFF];
 
         }
         break;
@@ -121,13 +130,12 @@ static uint8_t mmc1_prg_rom_read8(bus_device_t a_dev, cpu_t a_cpu, uint16_t a_ad
             {
                 // Not the last bank
                 // Read from the first 16 KB bank
-                retval = mmc1->m_prg_rom[0x0000 + (a_addr & 0x3FFF)];
+                retval = mmc1->m_prg_rom.bank16k[0].at[a_addr & 0x3FFF];
             }
             else
             {
-                // Read from the last 16 KB bank
                 uint8_t bank = mmc1->m_prg_bank_register.prg_bank % mmc1->m_prg_rom_16k_banks; 
-                retval = mmc1->m_prg_rom[(bank * 0x4000) + (a_addr & 0x3FFF)];
+                retval = mmc1->m_prg_rom.bank16k[bank].at[a_addr & 0x3FFF];
             }
         break;
         case 3: 
@@ -143,7 +151,7 @@ static uint8_t mmc1_prg_rom_read8(bus_device_t a_dev, cpu_t a_cpu, uint16_t a_ad
                 bank = mmc1->m_prg_bank_register.prg_bank % mmc1->m_prg_rom_16k_banks; 
             }
 
-            retval = mmc1->m_prg_rom[(bank * 0x4000) + (a_addr & 0x3FFF)];
+            retval = mmc1->m_prg_rom.bank16k[bank].at[a_addr & 0x3FFF];
         }
         break;
     }
@@ -168,10 +176,14 @@ static void mmc1_prg_rom_write8(bus_device_t a_dev, cpu_t a_cpu, uint16_t a_addr
         
         mmc1->m_control_register.raw = 0x0C;
         mmc1->m_prg_bank_register.raw = 0;
+
+        // Reset CHR bank registers too
+        mmc1->m_chr_bank0_register = 0;
+        mmc1->m_chr_bank1_register = 0;        
         return;
     }
 
-    mmc1->m_load_register.shift_register = mmc1->m_load_register.shift_register  | (a_value & 0x01);
+    mmc1->m_load_register.shift_register |= (a_value & 0x01);
         
     if (++mmc1->m_load_register.counter < 5)
     {
@@ -227,13 +239,13 @@ static uint8_t mmc1_ppu_pt0_read8(bus_device_t a_dev, cpu_t a_cpu, uint16_t a_ad
         // Low bit ignored in 8 KB mode
         uint8_t bank = mmc1->m_chr_bank0_register & ~0x01; 
         
-        retval = mmc1->m_ppu_chr[(bank * 0x2000) + (a_addr & 0x1FFF)];
+        retval = mmc1->m_chr_ram.bank8k[bank].at[a_addr & 0x1FFF];
     }
     else
     {
         // 4 KB mode
         uint8_t bank = mmc1->m_chr_bank0_register;
-        retval = mmc1->m_ppu_chr[(bank * 0x1000) + (a_addr & 0xFFF)];
+        retval = mmc1->m_chr_ram.bank4k[bank].at[a_addr & 0xFFF];
     }
 
     return retval;
@@ -242,26 +254,29 @@ static uint8_t mmc1_ppu_pt0_read8(bus_device_t a_dev, cpu_t a_cpu, uint16_t a_ad
 static uint16_t mmc1_ppu_pt0_read16(bus_device_t a_dev, cpu_t a_cpu, uint16_t a_addr)
 {
     asm("int3");
+    return 0;
 }
 
 static void mmc1_ppu_pt0_write8(bus_device_t a_dev, cpu_t a_cpu, uint16_t a_addr, uint8_t a_value)
 {
     mmc1_t mmc1 = PPU_CHR_DEVICE_TO_MMC1(a_dev);
-    uint16_t addr = 0;
 
     if (mmc1->m_control_register.chr_rom_bank_mode == 0) // 8 KB mode
     {
         // Low bit ignored in 8 KB mode
-        uint8_t bank = mmc1->m_chr_bank0_register & ~0x01; 
-        addr = (bank * 0x2000) + (a_addr & 0x1FFF);
+        mmc1->m_chr_ram.bank8k[mmc1->m_chr_bank0_register & ~0x01].at[a_addr & 0x1FFF] = a_value;
     }
     else // 4 KB mode
     {
-        uint8_t bank = mmc1->m_chr_bank0_register;
-        addr = (bank * 0x1000) + (a_addr & 0xFFF);
-    }
-    
-    mmc1->m_ppu_chr[addr] = a_value;
+        if (a_addr < 0x1000)
+        {
+            mmc1->m_chr_ram.bank4k[mmc1->m_chr_bank0_register].at[a_addr & 0xFFF] = a_value;
+        }
+        else
+        {
+            mmc1->m_chr_ram.bank4k[mmc1->m_chr_bank1_register].at[a_addr & 0xFFF] = a_value;
+        }
+    }    
 }
 
 static void mmc1_ppu_pt0_write16(bus_device_t a_dev, cpu_t a_cpu, uint16_t a_addr, uint16_t a_value)
@@ -302,7 +317,9 @@ mapper_return_t MMC1_map_ines(ines_header_t a_ines_hdr, bus_t a_bus, bus_device_
     *mmc1 = {};
 
     mmc1->m_control_register.prg_rom_bank_mode = 3; // Fix last bank at $C000 and switch 16 KB bank at $8000
-        
+
+    memset(&mmc1->m_prg_rom.bank16k->at[0], 0xF2, sizeof(mmc1->m_prg_rom)); // Fill with 0xF2, which is a JAM instruction(Good for debugging)
+
     // Create a PRG RAM device, they are usually  2 or 4 KiB and are mirrored to fill the entire 8 KiB range. We just create a 8 KiB device, no mirroring
     mmc1->m_prg_ram = ram_device_create(0x2000);
     
@@ -311,9 +328,7 @@ mapper_return_t MMC1_map_ines(ines_header_t a_ines_hdr, bus_t a_bus, bus_device_
 
     mmc1->m_prg_rom_16k_banks = a_ines_hdr->m_prg_rom_size;
     size_t prg_rom_size_in_bytes = mmc1->m_prg_rom_16k_banks * 0x4000;
-
-    mmc1->m_prg_rom = (uint8_t *)malloc(prg_rom_size_in_bytes);
-    memcpy(mmc1->m_prg_rom, ines_file, prg_rom_size_in_bytes);
+    memcpy(&mmc1->m_prg_rom.bank16k->at[0], ines_file, prg_rom_size_in_bytes);
 
     // Create a PRG ROM device and map over the whole 32 KiB range
     mmc1->m_prg_rom_device = {};
@@ -322,7 +337,7 @@ mapper_return_t MMC1_map_ines(ines_header_t a_ines_hdr, bus_t a_bus, bus_device_
 
     if (a_ines_hdr->m_chr_rom_size > 0)
     {
-        memcpy(mmc1->m_ppu_chr, ines_file + prg_rom_size_in_bytes, (a_ines_hdr->m_chr_rom_size * 0x2000));
+        memcpy(&mmc1->m_chr_ram.bank4k->at[0], ines_file + prg_rom_size_in_bytes, (a_ines_hdr->m_chr_rom_size * 0x2000));
     }
 
     mmc1->m_ppu_chr_device = {};
