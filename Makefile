@@ -1,8 +1,8 @@
 CXX := g++
-CXXFLAGS := -Wall -Wextra -Wno-unused -g -std=c++17
+CXXFLAGS := -Wall -Wextra -Wno-unused -g -std=c++17 -I.
 LDFLAGS := -lSDL2
 
-SRCS := $(wildcard *.cc)
+SRCS := $(wildcard *.cc) $(wildcard mapper/*.cc)
 OBJS := $(SRCS:.cc=.o)
 TARGET := nessie
 
@@ -15,6 +15,6 @@ $(TARGET): $(OBJS)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 clean:
-	rm -f $(OBJS) $(TARGET)
+	rm -f $(OBJS) mapper/*.o $(TARGET)
 
 .PHONY: all clean

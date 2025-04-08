@@ -11,7 +11,7 @@
             "program": "${workspaceFolder}/nessie",
             "args": [],
             "stopAtEntry": false,
-            "cwd": "${fileDirname}",
+            "cwd": "${workspaceFolder}",
             "environment": [
                 {
                     "name": "DISPLAY",

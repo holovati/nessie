@@ -1419,7 +1419,7 @@ void cpu_data::nmi()
     m_nmi = 1;
 }
 
-//#define DEBUG
+#define DEBUG
 
 #if defined(DEBUG)
 #include <stdio.h>

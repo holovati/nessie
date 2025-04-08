@@ -38,13 +38,15 @@ uint8_t bus_data::read8(cpu_t a_cpu, uint16_t a_addr)
     return 0xFF;
 }
 
+// This is a convienience function, in reallity we just do two 8 bit reads
 uint16_t bus_data::read16(cpu_t a_cpu, uint16_t a_addr)
 {
     bus_device_t dev = m_device_map[a_addr >> PAGE_SHIFT];
 
     if (dev)
     {
-        return dev->m_ops->read16(dev, a_cpu, a_addr - dev->m_base);
+        a_addr -= dev->m_base;
+        return (((uint16_t)dev->m_ops->read8(dev, a_cpu, a_addr + 1)) << 8) | ((uint16_t)dev->m_ops->read8(dev, a_cpu, a_addr));
     }
 
     return 0xFFFF;
