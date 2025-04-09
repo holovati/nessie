@@ -12,10 +12,10 @@ struct bus_data
 
     void attach(bus_device_t a_device, uint16_t a_base, uint32_t a_size);
 
-    uint8_t read8(cpu_t a_cpu, uint16_t a_addr);
-    uint16_t read16(cpu_t a_cpu, uint16_t a_addr);
-    void write8(cpu_t a_cpu, uint16_t a_addr, uint8_t a_value);
-    void write16(cpu_t a_cpu, uint16_t a_addr, uint16_t a_value);
+    uint8_t read8(uint16_t a_addr);
+    uint16_t read16(uint16_t a_addr);
+    void write8(uint16_t a_addr, uint8_t a_value);
+    void write16(uint16_t a_addr, uint16_t a_value);
 };
 
 struct bus_device_data 
@@ -28,8 +28,6 @@ struct bus_device_data
 
 struct bus_device_ops_data
 {
-    uint8_t (*read8)(bus_device_t a_dev, cpu_t a_cpu, uint16_t a_addr);
-    uint16_t (*read16)(bus_device_t a_dev, cpu_t a_cpu, uint16_t a_addr);
-    void (*write8)(bus_device_t a_dev, cpu_t a_cpu, uint16_t a_addr, uint8_t a_value);
-    void (*write16)(bus_device_t a_dev, cpu_t a_cpu, uint16_t a_addr, uint16_t a_value);
+    uint8_t (*read8)(bus_device_t a_dev, uint16_t a_addr);
+    void (*write8)(bus_device_t a_dev, uint16_t a_addr, uint8_t a_value);
 };

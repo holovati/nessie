@@ -97,7 +97,7 @@ typedef struct mmc1_data
 
 } *mmc1_t;
 
-static uint8_t mmc1_prg_rom_read8(bus_device_t a_dev, cpu_t a_cpu, uint16_t a_addr)
+static uint8_t mmc1_prg_rom_read8(bus_device_t a_dev, uint16_t a_addr)
 {
     mmc1_t mmc1 = PRG_ROM_DEVICE_TO_MMC1(a_dev);
 
@@ -135,13 +135,7 @@ static uint8_t mmc1_prg_rom_read8(bus_device_t a_dev, cpu_t a_cpu, uint16_t a_ad
     return retval;
 }
 
-static uint16_t mmc1_prg_rom_read16(bus_device_t a_dev, cpu_t a_cpu, uint16_t a_addr)
-{
-    asm("int3");
-    return 0;
-}
-
-static void mmc1_prg_rom_write8(bus_device_t a_dev, cpu_t a_cpu, uint16_t a_addr, uint8_t a_value)
+static void mmc1_prg_rom_write8(bus_device_t a_dev, uint16_t a_addr, uint8_t a_value)
 {
     mmc1_t mmc1 = PRG_ROM_DEVICE_TO_MMC1(a_dev);
 
@@ -185,20 +179,13 @@ static void mmc1_prg_rom_write8(bus_device_t a_dev, cpu_t a_cpu, uint16_t a_addr
     mmc1->m_load_register.raw = 0;
 }
 
-static void mmc1_prg_rom_write16(bus_device_t a_dev, cpu_t a_cpu, uint16_t a_addr, uint16_t a_value)
-{
-    asm("int3");
-}
-
 static struct bus_device_ops_data s_prg_rom_ops =
 {
     .read8 = mmc1_prg_rom_read8,
-    .read16 = mmc1_prg_rom_read16,
-    .write8 = mmc1_prg_rom_write8,
-    .write16 = mmc1_prg_rom_write16,
+    .write8 = mmc1_prg_rom_write8
 };
 
-static uint8_t mmc1_ppu_pt0_read8(bus_device_t a_dev, cpu_t a_cpu, uint16_t a_addr)
+static uint8_t mmc1_ppu_pt0_read8(bus_device_t a_dev, uint16_t a_addr)
 {
     mmc1_t mmc1 = PPU_CHR_DEVICE_TO_MMC1(a_dev);
 
@@ -224,13 +211,7 @@ static uint8_t mmc1_ppu_pt0_read8(bus_device_t a_dev, cpu_t a_cpu, uint16_t a_ad
     return retval;
 }
 
-static uint16_t mmc1_ppu_pt0_read16(bus_device_t a_dev, cpu_t a_cpu, uint16_t a_addr)
-{
-    asm("int3");
-    return 0;
-}
-
-static void mmc1_ppu_pt0_write8(bus_device_t a_dev, cpu_t a_cpu, uint16_t a_addr, uint8_t a_value)
+static void mmc1_ppu_pt0_write8(bus_device_t a_dev, uint16_t a_addr, uint8_t a_value)
 {
     mmc1_t mmc1 = PPU_CHR_DEVICE_TO_MMC1(a_dev);
 
@@ -252,17 +233,10 @@ static void mmc1_ppu_pt0_write8(bus_device_t a_dev, cpu_t a_cpu, uint16_t a_addr
     }    
 }
 
-static void mmc1_ppu_pt0_write16(bus_device_t a_dev, cpu_t a_cpu, uint16_t a_addr, uint16_t a_value)
-{
-    asm("int3");
-}
-
 static struct bus_device_ops_data s_ppu_pt0_ops =
 {
     .read8 = mmc1_ppu_pt0_read8,
-    .read16 = mmc1_ppu_pt0_read16,
-    .write8 = mmc1_ppu_pt0_write8,
-    .write16 = mmc1_ppu_pt0_write16,
+    .write8 = mmc1_ppu_pt0_write8
 };
 
 mapper_return_t MMC1_probe_ines(ines_header_t a_ines_hdr)

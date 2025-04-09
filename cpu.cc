@@ -12,7 +12,7 @@
 
 typedef struct opcode_data const *opcode_t;
 
-typedef void (*opcode_handler_t)(cpu_t, bus_t, opcode_t);
+typedef void (* const opcode_handler_t)(cpu_t, bus_t, opcode_t);
 
 enum cpu_addressing_mode : uint16_t
 {
@@ -341,39 +341,39 @@ static uint8_t opcode_read8(cpu_t a_cpu, bus_t a_bus, opcode_t a_opcode)
     break;
     case CPU_ADDRESSING_MODE_IMMEDIATE:
     {
-        value = a_bus->read8(a_cpu, a_cpu->m_registers.pc + 1);
+        value = a_bus->read8(a_cpu->m_registers.pc + 1);
     }
     break;
     case CPU_ADDRESSING_MODE_ZERO_PAGE:
     {
-        value = a_bus->read8(a_cpu, a_cpu->m_registers.pc + 1);
-        value = a_bus->read8(a_cpu, value);
+        value = a_bus->read8(a_cpu->m_registers.pc + 1);
+        value = a_bus->read8(value);
     }
     break;
     case CPU_ADDRESSING_MODE_ZERO_PAGE_X:
     {
-        value = a_bus->read8(a_cpu, a_cpu->m_registers.pc + 1);
+        value = a_bus->read8(a_cpu->m_registers.pc + 1);
         value = (value + a_cpu->m_registers.x) & 0xFF;
-        value = a_bus->read8(a_cpu, value);
+        value = a_bus->read8(value);
     }
     break;
     case CPU_ADDRESSING_MODE_ZERO_PAGE_Y:
     {
-        value = a_bus->read8(a_cpu, a_cpu->m_registers.pc + 1);
+        value = a_bus->read8(a_cpu->m_registers.pc + 1);
         value = (value + a_cpu->m_registers.y) & 0xFF;
-        value = a_bus->read8(a_cpu, value);
+        value = a_bus->read8(value);
     }
     break;
     case CPU_ADDRESSING_MODE_ABSOLUTE:
     {
-        uint16_t addr = a_bus->read16(a_cpu, a_cpu->m_registers.pc + 1);
-        value = a_bus->read8(a_cpu, addr);
+        uint16_t addr = a_bus->read16(a_cpu->m_registers.pc + 1);
+        value = a_bus->read8(addr);
     }
     break;
     case CPU_ADDRESSING_MODE_ABSOLUTE_X:
     {
-        uint16_t addr = a_bus->read16(a_cpu, a_cpu->m_registers.pc + 1);
-        value = a_bus->read8(a_cpu, addr + a_cpu->m_registers.x);
+        uint16_t addr = a_bus->read16(a_cpu->m_registers.pc + 1);
+        value = a_bus->read8(addr + a_cpu->m_registers.x);
 
         // Add one cycle if page boundary is crossed
         if ((addr & 0xFF00) != ((addr + a_cpu->m_registers.x) & 0xFF00))
@@ -384,8 +384,8 @@ static uint8_t opcode_read8(cpu_t a_cpu, bus_t a_bus, opcode_t a_opcode)
     break;
     case CPU_ADDRESSING_MODE_ABSOLUTE_Y:
     {
-        uint16_t addr = a_bus->read16(a_cpu, a_cpu->m_registers.pc + 1);
-        value = a_bus->read8(a_cpu, addr + a_cpu->m_registers.y);
+        uint16_t addr = a_bus->read16(a_cpu->m_registers.pc + 1);
+        value = a_bus->read8(addr + a_cpu->m_registers.y);
 
         // Add one cycle if page boundary is crossed
         if ((addr & 0xFF00) != ((addr + a_cpu->m_registers.y) & 0xFF00))
@@ -396,15 +396,15 @@ static uint8_t opcode_read8(cpu_t a_cpu, bus_t a_bus, opcode_t a_opcode)
     break;
     case CPU_ADDRESSING_MODE_INDEXED_INDIRECT:
     {
-        uint8_t zp_addr = a_bus->read8(a_cpu, a_cpu->m_registers.pc + 1);
-        uint16_t effective_addr = (a_bus->read8(a_cpu, (zp_addr + a_cpu->m_registers.x + 1) & 0xFF) << 8) | a_bus->read8(a_cpu, (zp_addr + a_cpu->m_registers.x) & 0xFF);
-        value = a_bus->read8(a_cpu, effective_addr);
+        uint8_t zp_addr = a_bus->read8(a_cpu->m_registers.pc + 1);
+        uint16_t effective_addr = (a_bus->read8((zp_addr + a_cpu->m_registers.x + 1) & 0xFF) << 8) | a_bus->read8((zp_addr + a_cpu->m_registers.x) & 0xFF);
+        value = a_bus->read8(effective_addr);
     }
     break;
     case CPU_ADDRESSING_MODE_INDIRECT_INDEXED:
     {
-        uint16_t zp_addr = a_bus->read8(a_cpu, a_cpu->m_registers.pc + 1);
-        uint16_t effective_address = ((a_bus->read8(a_cpu, (zp_addr + 1) & 0xFF) << 8) | a_bus->read8(a_cpu, zp_addr)) + a_cpu->m_registers.y;
+        uint16_t zp_addr = a_bus->read8(a_cpu->m_registers.pc + 1);
+        uint16_t effective_address = ((a_bus->read8((zp_addr + 1) & 0xFF) << 8) | a_bus->read8(zp_addr)) + a_cpu->m_registers.y;
     
         // Add one cycle if page boundary is crossed
         if ((effective_address & 0xFF00) != (effective_address & 0xFF00))
@@ -412,7 +412,7 @@ static uint8_t opcode_read8(cpu_t a_cpu, bus_t a_bus, opcode_t a_opcode)
             a_cpu->m_remaining_cycles++;
         }
     
-        value = a_bus->read8(a_cpu, effective_address);
+        value = a_bus->read8(effective_address);
     }
     break;
     default:
@@ -433,57 +433,57 @@ static void opcode_write8(cpu_t a_cpu, bus_t a_bus, opcode_t a_opcode, uint8_t a
     break;
     case CPU_ADDRESSING_MODE_ZERO_PAGE:
     {
-        uint8_t addr = a_bus->read8(a_cpu, a_cpu->m_registers.pc + 1);
-        a_bus->write8(a_cpu, addr, a_value);
+        uint8_t addr = a_bus->read8(a_cpu->m_registers.pc + 1);
+        a_bus->write8(addr, a_value);
     }
     break;
     case CPU_ADDRESSING_MODE_ZERO_PAGE_X:
     {
-        uint8_t addr = a_bus->read8(a_cpu, a_cpu->m_registers.pc + 1);
+        uint8_t addr = a_bus->read8(a_cpu->m_registers.pc + 1);
         addr = (addr + a_cpu->m_registers.x) & 0xFF;
-        a_bus->write8(a_cpu, addr, a_value);
+        a_bus->write8(addr, a_value);
     }
     break;
     case CPU_ADDRESSING_MODE_ZERO_PAGE_Y:
     {
-        uint8_t addr = a_bus->read8(a_cpu, a_cpu->m_registers.pc + 1);
+        uint8_t addr = a_bus->read8(a_cpu->m_registers.pc + 1);
         addr = (addr + a_cpu->m_registers.y) & 0xFF;
-        a_bus->write8(a_cpu, addr, a_value);
+        a_bus->write8(addr, a_value);
     }
     break;
     case CPU_ADDRESSING_MODE_ABSOLUTE:
     {
-        uint16_t addr = a_bus->read16(a_cpu, a_cpu->m_registers.pc + 1);
-        a_bus->write8(a_cpu, addr, a_value);
+        uint16_t addr = a_bus->read16(a_cpu->m_registers.pc + 1);
+        a_bus->write8(addr, a_value);
     }
     break;
     case CPU_ADDRESSING_MODE_ABSOLUTE_X:
     {
-        uint16_t addr = a_bus->read16(a_cpu, a_cpu->m_registers.pc + 1);
+        uint16_t addr = a_bus->read16(a_cpu->m_registers.pc + 1);
         addr = addr + a_cpu->m_registers.x;
-        a_bus->write8(a_cpu, addr, a_value);
+        a_bus->write8(addr, a_value);
     }
     break;
     case CPU_ADDRESSING_MODE_ABSOLUTE_Y:
     {
-        uint16_t addr = a_bus->read16(a_cpu, a_cpu->m_registers.pc + 1);
+        uint16_t addr = a_bus->read16(a_cpu->m_registers.pc + 1);
         addr = addr + a_cpu->m_registers.y;
-        a_bus->write8(a_cpu, addr, a_value);
+        a_bus->write8(addr, a_value);
     }
     break;
     case CPU_ADDRESSING_MODE_INDEXED_INDIRECT:
     {
-        uint8_t zp_addr = a_bus->read8(a_cpu, a_cpu->m_registers.pc + 1);
-        uint16_t effective_addr = a_bus->read8(a_cpu, (zp_addr + a_cpu->m_registers.x) & 0xFF);
-        effective_addr |= (a_bus->read8(a_cpu, (zp_addr + a_cpu->m_registers.x + 1) & 0xFF) << 8);
-        a_bus->write8(a_cpu, effective_addr, a_value);
+        uint8_t zp_addr = a_bus->read8(a_cpu->m_registers.pc + 1);
+        uint16_t effective_addr = a_bus->read8((zp_addr + a_cpu->m_registers.x) & 0xFF);
+        effective_addr |= (a_bus->read8((zp_addr + a_cpu->m_registers.x + 1) & 0xFF) << 8);
+        a_bus->write8(effective_addr, a_value);
     }
     break;
     case CPU_ADDRESSING_MODE_INDIRECT_INDEXED:
     {
-        uint16_t zp_addr = a_bus->read8(a_cpu, a_cpu->m_registers.pc + 1);
-        uint16_t effective_address = ((a_bus->read8(a_cpu, (zp_addr + 1) & 0xFF) << 8) | a_bus->read8(a_cpu, zp_addr)) + a_cpu->m_registers.y;    
-        a_bus->write8(a_cpu, effective_address, a_value);
+        uint16_t zp_addr = a_bus->read8(a_cpu->m_registers.pc + 1);
+        uint16_t effective_address = ((a_bus->read8((zp_addr + 1) & 0xFF) << 8) | a_bus->read8(zp_addr)) + a_cpu->m_registers.y;    
+        a_bus->write8(effective_address, a_value);
     }
     break;
     default:
@@ -496,7 +496,7 @@ static void opcode_branch(cpu_t a_cpu, bus_t a_bus, opcode_t a_opcode)
     // If the branch is taken, add an extra cycle
     a_cpu->m_remaining_cycles++;
     
-    uint8_t offset = a_bus->read8(a_cpu, a_cpu->m_registers.pc + 1);
+    uint8_t offset = a_bus->read8(a_cpu->m_registers.pc + 1);
 
     // We need the old pc for the page boundary check
     uint16_t old_pc = a_cpu->m_registers.pc;
@@ -523,18 +523,18 @@ static void opcode_branch(cpu_t a_cpu, bus_t a_bus, opcode_t a_opcode)
 
 static void opcode_push_stack8(cpu_t a_cpu, bus_t a_bus, uint8_t a_value)
 {
-    a_bus->write8(a_cpu, 0x0100 + a_cpu->m_registers.s, a_value);
+    a_bus->write8(0x0100 + a_cpu->m_registers.s, a_value);
     a_cpu->m_registers.s--;
 }
 
 static void opcode_push_stack16(cpu_t a_cpu, bus_t a_bus, uint16_t a_value)
 {
     // Push high byte first
-    a_bus->write8(a_cpu, 0x0100 + a_cpu->m_registers.s, a_value >> 8);
+    a_bus->write8(0x0100 + a_cpu->m_registers.s, a_value >> 8);
     a_cpu->m_registers.s--;
 
     // Push low byte next
-    a_bus->write8(a_cpu, 0x0100 + a_cpu->m_registers.s, a_value & 0xFF);
+    a_bus->write8(0x0100 + a_cpu->m_registers.s, a_value & 0xFF);
     a_cpu->m_registers.s--;
 }
 
@@ -542,7 +542,7 @@ static uint8_t opcode_pop_stack8(cpu_t a_cpu, bus_t a_bus)
 {
     a_cpu->m_registers.s++;
     
-    uint8_t value = a_bus->read8(a_cpu, 0x0100 + a_cpu->m_registers.s);
+    uint8_t value = a_bus->read8(0x0100 + a_cpu->m_registers.s);
     
     return value;
 }
@@ -551,11 +551,11 @@ static uint16_t opcode_pop_stack16(cpu_t a_cpu, bus_t a_bus)
 {
     a_cpu->m_registers.s++;
     
-    uint16_t value = a_bus->read8(a_cpu, 0x0100 + a_cpu->m_registers.s);
+    uint16_t value = a_bus->read8(0x0100 + a_cpu->m_registers.s);
 
     a_cpu->m_registers.s++;
     
-    value |= ((uint16_t)a_bus->read8(a_cpu, 0x0100 + a_cpu->m_registers.s)) << 8;
+    value |= ((uint16_t)a_bus->read8(0x0100 + a_cpu->m_registers.s)) << 8;
 
     return value;
 }
@@ -738,7 +738,7 @@ static void opcode_brk(cpu_t a_cpu, bus_t a_bus, opcode_t a_opcode)
     a_cpu->m_registers.status.flag.i = 1;
 
     // Compensate for the automatic PC increment in cpu_data::tick
-    a_cpu->m_registers.pc = a_bus->read16(a_cpu, 0xFFFE) - a_opcode->length;
+    a_cpu->m_registers.pc = a_bus->read16(0xFFFE) - a_opcode->length;
 }
 
 static void opcode_bvc(cpu_t a_cpu, bus_t a_bus, opcode_t a_opcode)
@@ -953,30 +953,30 @@ static void opcode_jmp(cpu_t a_cpu, bus_t a_bus, opcode_t a_opcode)
 {
     if (a_opcode->mode == CPU_ADDRESSING_MODE_ABSOLUTE)
     {
-        uint16_t addr = a_bus->read16(a_cpu, a_cpu->m_registers.pc + 1);
+        uint16_t addr = a_bus->read16(a_cpu->m_registers.pc + 1);
         a_cpu->m_registers.pc = addr - a_opcode->length;
     }
     else /* if (a_opcode->mode == CPU_ADDRESSING_MODE_INDIRECT) */
     {
-        uint16_t addr = a_bus->read16(a_cpu, a_cpu->m_registers.pc + 1);
+        uint16_t addr = a_bus->read16(a_cpu->m_registers.pc + 1);
         
         // Simulate 6502 JMP indirect bug: if address is $xxFF, fetch second byte from $xx00, not $xx+1:00
         if ((addr & 0xFF) == 0xFF) 
         {
-            uint8_t lo = a_bus->read8(a_cpu, addr);
-            uint8_t hi = a_bus->read8(a_cpu, addr & 0xFF00); // Wrap to same page
+            uint8_t lo = a_bus->read8(addr);
+            uint8_t hi = a_bus->read8(addr & 0xFF00); // Wrap to same page
             a_cpu->m_registers.pc = ((hi << 8) | lo) - a_opcode->length;
         } 
         else 
         {
-            a_cpu->m_registers.pc = a_bus->read16(a_cpu, addr) - a_opcode->length;
+            a_cpu->m_registers.pc = a_bus->read16(addr) - a_opcode->length;
         }
     }
 }
 
 static void opcode_jsr(cpu_t a_cpu, bus_t a_bus, opcode_t a_opcode)
 {
-    uint16_t addr = a_bus->read16(a_cpu, a_cpu->m_registers.pc + 1) - a_opcode->length;
+    uint16_t addr = a_bus->read16(a_cpu->m_registers.pc + 1) - a_opcode->length;
     uint16_t return_addr = a_cpu->m_registers.pc + a_opcode->length - 1;
 
     opcode_push_stack16(a_cpu, a_bus, return_addr);
@@ -1305,7 +1305,7 @@ static void opcode_txs(cpu_t a_cpu, bus_t a_bus, opcode_t a_opcode)
 static void opcode_shy(cpu_t a_cpu, bus_t a_bus, opcode_t a_opcode)
 {
     // Compute the target address based on the addressing mode
-    uint16_t base_addr = a_bus->read16(a_cpu, a_cpu->m_registers.pc + 1);
+    uint16_t base_addr = a_bus->read16(a_cpu->m_registers.pc + 1);
     uint16_t addr = base_addr + a_cpu->m_registers.x;
 
     // Compute the value to store: Y & (high byte of the target address + 1)
@@ -1318,13 +1318,13 @@ static void opcode_shy(cpu_t a_cpu, bus_t a_bus, opcode_t a_opcode)
     }
 
     // Write the result to the target memory address
-    a_bus->write8(a_cpu, addr, value);
+    a_bus->write8(addr, value);
 }
 
 static void opcode_shx(cpu_t a_cpu, bus_t a_bus, opcode_t a_opcode)
 {
     // Compute the target address based on the addressing mode
-    uint16_t base_addr = a_bus->read16(a_cpu, a_cpu->m_registers.pc + 1);
+    uint16_t base_addr = a_bus->read16(a_cpu->m_registers.pc + 1);
     uint16_t addr = base_addr + a_cpu->m_registers.y;
 
     // Compute the value to store: X & (high byte of the target address + 1)
@@ -1337,16 +1337,16 @@ static void opcode_shx(cpu_t a_cpu, bus_t a_bus, opcode_t a_opcode)
     }
 
     // Write the result to the target memory address
-    a_bus->write8(a_cpu, addr, value);
+    a_bus->write8(addr, value);
 }
 
 static void opcode_sha(cpu_t a_cpu, bus_t a_bus, opcode_t a_opcode)
 {
     // Read the base address from the opcode (indirect addressing)
-    uint16_t base_addr = a_bus->read8(a_cpu, a_cpu->m_registers.pc + 1);
+    uint16_t base_addr = a_bus->read8(a_cpu->m_registers.pc + 1);
 
     // Read the effective address from the base address
-    uint16_t addr = a_bus->read16(a_cpu, base_addr);
+    uint16_t addr = a_bus->read16(base_addr);
 
     // Add the Y register to the effective address (indirect,Y addressing mode)
     addr += a_cpu->m_registers.y;
@@ -1355,7 +1355,7 @@ static void opcode_sha(cpu_t a_cpu, bus_t a_bus, opcode_t a_opcode)
     uint8_t value = (a_cpu->m_registers.a & a_cpu->m_registers.x) & (((addr >> 8) + 1) & 0xFF);
 
     // Write the result to the target memory address
-    a_bus->write8(a_cpu, addr, value);
+    a_bus->write8(addr, value);
 }
 
 static void opcode_tya(cpu_t a_cpu, bus_t a_bus, opcode_t a_opcode)
@@ -1405,7 +1405,7 @@ void cpu_data::power_on(bus_t a_bus)
 
     m_registers.s = 0xFD;
     
-    m_registers.pc = a_bus->read16(this, 0xFFFC);
+    m_registers.pc = a_bus->read16(0xFFFC);
     m_registers.status.raw = CPU_FLAG_INTERRUPT_DISABLE | CPU_FLAG_UNUSED;
 
     m_nmi = 0;
@@ -1418,7 +1418,7 @@ void cpu_data::nmi()
     m_nmi = 1;
 }
 
-#define DEBUG
+//#define DEBUG
 
 #if defined(DEBUG)
 #include <stdio.h>
@@ -1438,7 +1438,7 @@ void cpu_data::tick(bus_t a_bus)
         opcode_push_stack8(this, a_bus, m_registers.status.raw | CPU_FLAG_INTERRUPT_DISABLE | CPU_FLAG_UNUSED);
 
         m_registers.status.flag.i = 1;
-        m_registers.pc = a_bus->read16(this, 0xFFFA);
+        m_registers.pc = a_bus->read16(0xFFFA);
 
         m_nmi = 0;
 
@@ -1449,7 +1449,7 @@ void cpu_data::tick(bus_t a_bus)
 
     // Print the address and opcode for debugging
     
-    uint8_t opcode_number = a_bus->read8(this, m_registers.pc);
+    uint8_t opcode_number = a_bus->read8(m_registers.pc);
     
     opcode_t opcode = &g_opcodes[opcode_number >> 4][opcode_number & 0xF];
 

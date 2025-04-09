@@ -1,6 +1,5 @@
 #include "ppu.h"
 #include "bus.h"
-#include "cpu.h"
 
 #include <SDL2/SDL.h>
 #include <stdlib.h>
@@ -228,7 +227,7 @@ static void ppu_addr_write(ppu_device_t a_ppu, uint8_t a_value)
     }
 }
 
-static uint8_t ppu_data_read(ppu_device_t a_ppu, cpu_t a_cpu)
+static uint8_t ppu_data_read(ppu_device_t a_ppu)
 {
     uint8_t result = 0;
     // Read new data into buffer
@@ -249,7 +248,7 @@ static uint8_t ppu_data_read(ppu_device_t a_ppu, cpu_t a_cpu)
         // Normal memory read
         // Return buffered data
         result = a_ppu->vram_data;
-        a_ppu->vram_data = a_ppu->m_bus.read8(a_cpu, addr);
+        a_ppu->vram_data = a_ppu->m_bus.read8(addr);
     }
 
     a_ppu->v.raw += a_ppu->m_registers.ctrl.increment ? 32 : 1;
@@ -257,7 +256,7 @@ static uint8_t ppu_data_read(ppu_device_t a_ppu, cpu_t a_cpu)
     return result;
 }
 
-static void ppu_data_write(ppu_device_t a_ppu, cpu_t a_cpu, uint8_t a_value)
+static void ppu_data_write(ppu_device_t a_ppu, uint8_t a_value)
 {
     uint16_t addr = a_ppu->v.raw & 0x3FFF;
 
@@ -275,7 +274,7 @@ static void ppu_data_write(ppu_device_t a_ppu, cpu_t a_cpu, uint8_t a_value)
     }
     else
     {
-        a_ppu->m_bus.write8(a_cpu, a_ppu->v.raw, a_value);
+        a_ppu->m_bus.write8(a_ppu->v.raw, a_value);
     }
 
     a_ppu->v.raw += a_ppu->m_registers.ctrl.increment ? 32 : 1;
@@ -382,17 +381,17 @@ static void ppu_update_shift_registers(ppu_device_t a_ppu)
     }
 }
 
-static void ppu_vram_fetch_tick(ppu_device_t a_ppu, cpu_t a_cpu)
+static void ppu_vram_fetch_tick(ppu_device_t a_ppu)
 {
     switch (PPU_FETCH_CYCLE(a_ppu))
     {
     case 0:
         // Get the nametable data
-        a_ppu->bg_next_tile_id = a_ppu->m_bus.read8(a_cpu, 0x2000 | (a_ppu->v.raw & 0x0FFF));
+        a_ppu->bg_next_tile_id = a_ppu->m_bus.read8(0x2000 | (a_ppu->v.raw & 0x0FFF));
         break;
     case 2:
         // Get the attribute table data
-        a_ppu->bg_next_tile_attrib = a_ppu->m_bus.read8(a_cpu, 0x23C0 | (a_ppu->v.nametable_y << 11) | ((a_ppu->v.nametable_x << 10) | ((a_ppu->v.coarse_y >> 2) << 3) | (a_ppu->v.coarse_x >> 2)));
+        a_ppu->bg_next_tile_attrib = a_ppu->m_bus.read8(0x23C0 | (a_ppu->v.nametable_y << 11) | ((a_ppu->v.nametable_x << 10) | ((a_ppu->v.coarse_y >> 2) << 3) | (a_ppu->v.coarse_x >> 2)));
 
         if (a_ppu->v.coarse_y & 0x02)
         {
@@ -409,11 +408,11 @@ static void ppu_vram_fetch_tick(ppu_device_t a_ppu, cpu_t a_cpu)
         break;
     case 4:
         // Get the pattern table address (Low byte)
-        a_ppu->bg_next_tile_lsb = a_ppu->m_bus.read8(a_cpu, (a_ppu->m_registers.ctrl.background_table << 12) | (a_ppu->bg_next_tile_id << 4) | (a_ppu->v.fine_y + 0));
+        a_ppu->bg_next_tile_lsb = a_ppu->m_bus.read8((a_ppu->m_registers.ctrl.background_table << 12) | (a_ppu->bg_next_tile_id << 4) | (a_ppu->v.fine_y + 0));
         break;
     case 6:
         // Get the pattern table address (high byte)
-        a_ppu->bg_next_tile_msb = a_ppu->m_bus.read8(a_cpu, (a_ppu->m_registers.ctrl.background_table << 12) | (a_ppu->bg_next_tile_id << 4) | (a_ppu->v.fine_y + 8));
+        a_ppu->bg_next_tile_msb = a_ppu->m_bus.read8((a_ppu->m_registers.ctrl.background_table << 12) | (a_ppu->bg_next_tile_id << 4) | (a_ppu->v.fine_y + 8));
         break;
     case 7:
         if ((a_ppu->m_cycle <= 256) || (a_ppu->m_cycle == 328) || (a_ppu->m_cycle == 336))
@@ -430,7 +429,7 @@ static void ppu_vram_fetch_tick(ppu_device_t a_ppu, cpu_t a_cpu)
     }
 }
 
-static void ppu_scanline_pre_render(ppu_device_t a_ppu, cpu_t a_cpu)
+static void ppu_scanline_pre_render(ppu_device_t a_ppu)
 {
     // At cycle 1 of pre-render scanline, clear VBlank, sprite overflow, and sprite 0 hit flags
     if (a_ppu->m_cycle == 1)
@@ -443,7 +442,7 @@ static void ppu_scanline_pre_render(ppu_device_t a_ppu, cpu_t a_cpu)
     else if (a_ppu->m_cycle <= 256 || (a_ppu->m_cycle >= 321 && a_ppu->m_cycle <= 336))
     {
         ppu_update_shift_registers(a_ppu);
-        ppu_vram_fetch_tick(a_ppu, a_cpu);
+        ppu_vram_fetch_tick(a_ppu);
     }
     else if (a_ppu->m_cycle == 257)
     {
@@ -462,12 +461,12 @@ static void ppu_scanline_pre_render(ppu_device_t a_ppu, cpu_t a_cpu)
     }
 }
 
-static void ppu_scanline_visible(ppu_device_t a_ppu, cpu_t a_cpu)
+static void ppu_scanline_visible(ppu_device_t a_ppu)
 {
     if (a_ppu->m_cycle <= 256 || (a_ppu->m_cycle >= 321 && a_ppu->m_cycle <= 336))
     {
         ppu_update_shift_registers(a_ppu);
-        ppu_vram_fetch_tick(a_ppu, a_cpu);
+        ppu_vram_fetch_tick(a_ppu);
     }
     else if (a_ppu->m_cycle == 257)
     {
@@ -537,7 +536,7 @@ static void ppu_scanline_visible(ppu_device_t a_ppu, cpu_t a_cpu)
     }
 }
 
-static void ppu_scanline_post_render(ppu_device_t a_ppu, cpu_t a_cpu)
+static void ppu_scanline_post_render(ppu_device_t a_ppu)
 {
     // Only render the frame at the end of the post-render scanline
     if (a_ppu->m_cycle == 1)
@@ -581,7 +580,7 @@ static void ppu_scanline_post_render(ppu_device_t a_ppu, cpu_t a_cpu)
     }
 }
 
-static void ppu_scanline_vblank(ppu_device_t a_ppu, cpu_t a_cpu)
+static void ppu_scanline_vblank(ppu_device_t a_ppu, uint32_t *a_nmi_out)
 {
     if (a_ppu->m_cycle == 1)
     {
@@ -593,37 +592,37 @@ static void ppu_scanline_vblank(ppu_device_t a_ppu, cpu_t a_cpu)
             // Generate NMI if enabled
             if (a_ppu->m_registers.ctrl.nmi)
             {
-                a_cpu->nmi();
+                *a_nmi_out |= 1; // Set NMI flag
             }
         }
     }
 }
 
-static void ppu_scanline_idle_cycle(ppu_device_t a_ppu, cpu_t a_cpu)
+static void ppu_scanline_idle_cycle(ppu_device_t a_ppu)
 {
 }
 
-static void ppu_scanline(ppu_device_t a_ppu, cpu_t a_cpu)
+static void ppu_scanline(ppu_device_t a_ppu, uint32_t *a_nmi_out)
 {
     if (a_ppu->m_scanline < 240) // Render scanlines
     {
-        ppu_scanline_visible(a_ppu, a_cpu);
+        ppu_scanline_visible(a_ppu);
     }
     else if (a_ppu->m_scanline == 240) // Post-render scanline
     {
-        ppu_scanline_post_render(a_ppu, a_cpu);
+        ppu_scanline_post_render(a_ppu);
     }
     else if (a_ppu->m_scanline < 261) // Vertical blanking line
     {
-        ppu_scanline_vblank(a_ppu, a_cpu);
+        ppu_scanline_vblank(a_ppu, a_nmi_out);
     }
     else
     {
-        ppu_scanline_pre_render(a_ppu, a_cpu);
+        ppu_scanline_pre_render(a_ppu);
     }
 }
 
-void ppu_device_tick(bus_device_t a_ppu_device, cpu_t a_cpu)
+void ppu_device_tick(bus_device_t a_ppu_device, uint32_t *a_nmi_out)
 {
     ppu_device_t ppu = DEVICE_TO_PPU(a_ppu_device);
 
@@ -639,11 +638,11 @@ void ppu_device_tick(bus_device_t a_ppu_device, cpu_t a_cpu)
     if (ppu->m_cycle == 0)
     {
         // Idle cycle
-        ppu_scanline_idle_cycle(ppu, a_cpu);
+        ppu_scanline_idle_cycle(ppu);
     }
     else
     {
-        ppu_scanline(ppu, a_cpu);
+        ppu_scanline(ppu, a_nmi_out);
     }
 
     if (ppu->m_cycle < 341)
@@ -665,7 +664,7 @@ void ppu_device_attach(bus_device_t a_ppu_device, bus_device_t a_bus_device, uin
     ppu->m_bus.attach(a_bus_device, a_base, a_size);
 }
 
-static uint8_t ppu_read8(bus_device_t a_dev, cpu_t a_cpu, uint16_t a_addr)
+static uint8_t ppu_read8(bus_device_t a_dev, uint16_t a_addr)
 {
     switch (a_addr & 0x7)
     {
@@ -674,18 +673,12 @@ static uint8_t ppu_read8(bus_device_t a_dev, cpu_t a_cpu, uint16_t a_addr)
     case 4: // OAMDATA
         return ppu_oamdata_read(DEVICE_TO_PPU(a_dev));
     case 7: // PPUDATA
-        return ppu_data_read(DEVICE_TO_PPU(a_dev), a_cpu);
+        return ppu_data_read(DEVICE_TO_PPU(a_dev));
     }
     assert(0); // For debugging
 }
 
-static uint16_t ppu_read16(bus_device_t a_dev, cpu_t a_cpu, uint16_t a_addr)
-{
-    assert(0);
-    return 0;
-}
-
-static void ppu_write8(bus_device_t a_dev, cpu_t a_cpu, uint16_t a_addr, uint8_t a_value)
+static void ppu_write8(bus_device_t a_dev, uint16_t a_addr, uint8_t a_value)
 {
     switch (a_addr & 0x7)
     {
@@ -708,24 +701,18 @@ static void ppu_write8(bus_device_t a_dev, cpu_t a_cpu, uint16_t a_addr, uint8_t
         ppu_addr_write(DEVICE_TO_PPU(a_dev), a_value);
         break;
     case 7: // PPUDATA
-        ppu_data_write(DEVICE_TO_PPU(a_dev), a_cpu, a_value);
+        ppu_data_write(DEVICE_TO_PPU(a_dev), a_value);
         break;
     default:
         assert(0); // For debugging
     }
 }
 
-static void ppu_write16(bus_device_t a_dev, cpu_t a_cpu, uint16_t a_addr, uint16_t a_value)
-{
-    assert(0);
-}
-
 static struct bus_device_ops_data g_ppu_ops =
-    {
+{
         .read8 = ppu_read8,
-        .read16 = ppu_read16,
-        .write8 = ppu_write8,
-        .write16 = ppu_write16};
+        .write8 = ppu_write8
+};
 
 bus_device_t ppu_device_create()
 {

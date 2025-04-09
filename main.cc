@@ -26,12 +26,12 @@ $8000–$FFFF $8000   Usually cartridge ROM and mapper registers.
 */
 
 static char const  * const s_test_rom_files[] = {
-    "test_roms/cpu.nes", // MAPPER 1
-    "test_roms/all_instrs.nes",
-    "test_roms/window2_ntsc.nes",
-    "test_roms/nes15-NTSC.nes",
-    "test_roms/full_palette.nes",
-    "test_roms/pacman.nes",
+    "test_roms/cpu.nes", // Passes all tests
+    "test_roms/all_instrs.nes", // Passes all tests
+    "test_roms/pacman.nes", // Shows the title screen, but does not work correctly
+    "test_roms/full_palette.nes", // Does not work
+    "test_roms/window2_ntsc.nes", // Works, but does not render correctly
+    "test_roms/nes15-NTSC.nes", // Works, but color palette is wrong
 };
 
 int main()
@@ -105,6 +105,8 @@ int main()
 
         cpu.power_on(&bus);
 
+        uint32_t nmi = 0;
+
         // Run the CPU
         for (unsigned tickcount = 0;; tickcount++)
         {
@@ -113,12 +115,18 @@ int main()
             // PPU divides the master clock by 4
             if ((tickcount % 4) == 0)
             {
-                ppu_device_tick(ppu, &cpu);
+                ppu_device_tick(ppu, &nmi);
             }
 
             // CPU divides the master clock by 12
             if ((tickcount % 12) == 0)
             {
+                if (nmi)
+                {
+                    cpu.nmi();
+                    nmi = 0;
+                }
+
                 cpu.tick(&bus);
             }
 
