@@ -3,12 +3,15 @@
 #include <stdio.h>
 #include <utime.h>
 #include <time.h>
+#include <SDL2/SDL.h>
 
+#include "apu.h"
 #include "cpu.h"
 #include "bus.h"
 #include "ppu.h"
 #include "ram_device.h"
 #include "mapper.h"
+#include <sched.h>
 
 // NES Memory Map
 /*
@@ -26,17 +29,117 @@ $8000–$FFFF $8000   Usually cartridge ROM and mapper registers.
 */
 
 static char const  * const s_test_rom_files[] = {
+    "test_roms/power_up_palette.nes", //?
+    "test_roms/palette_ram.nes", //OK
+    "test_roms/af.nes", // ?
+    "test_roms/Castlevania.nes", // unsupported mapper
+    "test_roms/punchout.nes", // unsupported mapper
+    "test_roms/t2.nes", // unsupported mapper
+    "test_roms/paperboy.nes", // unsupported mapper
+    "test_roms/solstice.nes", // unsupported mapper
+    "test_roms/stropics.nes", // unsupported mapper
+    "test_roms/dd.nes", // double dragon
+    "test_roms/colorwin_ntsc.nes", // ?
+    "test_roms/nes15-NTSC.nes", // Works, but color palette is wrong
+    "test_roms/window2_ntsc.nes", // Works, but does not render correctly
+    "test_roms/full_palette.nes", // Does not work
+    "test_roms/smb.nes", // ?
+    "test_roms/pacman.nes", // Works 
     "test_roms/cpu.nes", // Passes all tests
     "test_roms/all_instrs.nes", // Passes all tests
-    "test_roms/pacman.nes", // Shows the title screen, but does not work correctly
-    "test_roms/full_palette.nes", // Does not work
-    "test_roms/window2_ntsc.nes", // Works, but does not render correctly
-    "test_roms/nes15-NTSC.nes", // Works, but color palette is wrong
 };
+
+#define NES_FRAME_WIDTH 256
+#define NES_FRAME_HEIGHT 240
+#define NES_FRAME_BORDER 3
+#define NES_SCALE_FACTOR 3
+
+static void ppu_frame_render(ppu_rgb_color_t a_frame, void *a_context)
+{
+    // Cast the context to SDL_Renderer
+    SDL_Renderer *renderer = (SDL_Renderer *)a_context;
+
+    // Draw a red rectangle around the NES frame with a thickness of 3 pixels
+    SDL_SetRenderDrawColor(renderer, 255, 0, 0, 255); // Set color to red
+    // Draw a 3 pixel border around the nes frame
+    SDL_Rect r = {0,
+                  0,
+                  (NES_FRAME_WIDTH * NES_SCALE_FACTOR) + (NES_FRAME_BORDER * NES_SCALE_FACTOR) * 2,
+                  (NES_FRAME_HEIGHT * NES_SCALE_FACTOR) + (NES_FRAME_BORDER * NES_SCALE_FACTOR) * 2};
+                    
+    SDL_RenderDrawRect(renderer, &r); // Draw the border
+
+    // Draw each pixel from the frame buffer to the SDL renderer
+    for (int y = 0; y < NES_FRAME_HEIGHT; y++)
+    {
+        for (int x = 0; x < NES_FRAME_WIDTH; x++)
+        {
+            // Set the color for this pixel
+            ppu_rgb_color_t pixel = &a_frame[(y * NES_FRAME_WIDTH) + x];
+            SDL_SetRenderDrawColor(renderer, pixel->r, pixel->g, pixel->b, 255);
+            // Draw a scaled rectangle for each pixel
+            SDL_Rect rect = {(x * NES_SCALE_FACTOR) + (NES_FRAME_BORDER * NES_SCALE_FACTOR),
+                             (y * NES_SCALE_FACTOR) + (NES_FRAME_BORDER * NES_SCALE_FACTOR),
+                             NES_SCALE_FACTOR,
+                             NES_SCALE_FACTOR};
+
+            SDL_RenderFillRect(renderer, &rect);
+        }
+    }
+
+
+    // Present the renderer (show the frame)
+    SDL_RenderPresent(renderer);
+
+    // Process any pending SDL events to keep the window responsive
+    SDL_Event event;
+    while (SDL_PollEvent(&event))
+    {
+        if (event.type == SDL_QUIT)
+        {
+            // Handle quit event if needed
+            // You could set a flag to signal the emulator to shut down
+        }
+    }
+}
 
 int main()
 {
     setvbuf(stdout, NULL, _IONBF, 0); // Disable buffering for stdout
+
+    if (SDL_Init(SDL_INIT_VIDEO) != 0) // Initialize SDL
+    {
+        fprintf(stderr, "SDL_Init Error: %s\n", SDL_GetError());
+        return 1;
+    }
+
+    SDL_Window *window;     // SDL window
+
+    SDL_Renderer *renderer; // SDL renderer
+
+    // Create SDL window
+    window = SDL_CreateWindow("Nessie", 
+                               SDL_WINDOWPOS_CENTERED, 
+                               SDL_WINDOWPOS_CENTERED, 
+                               (NES_FRAME_WIDTH  * NES_SCALE_FACTOR) + (((NES_FRAME_BORDER * 2) * NES_SCALE_FACTOR)), 
+                               (NES_FRAME_HEIGHT * NES_SCALE_FACTOR) + (((NES_FRAME_BORDER * 2) * NES_SCALE_FACTOR)), 
+                               SDL_WINDOW_SHOWN);
+    if (!window)
+    {
+        fprintf(stderr, "SDL_CreateWindow Error: %s\n", SDL_GetError());
+        SDL_Quit();
+        return 1;
+    }
+
+    // Create SDL renderer
+    renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_PRESENTVSYNC);
+    if (!renderer)
+    {
+        fprintf(stderr, "SDL_CreateRenderer Error: %s\n", SDL_GetError());
+        SDL_DestroyWindow(window);
+        SDL_Quit();
+        return 1;
+    }
 
     struct cpu_data cpu;
     
@@ -56,6 +159,14 @@ int main()
     // Attach the PPU to the bus at address 0x2000.
     // The PPU registers are mirrored every 8 bytes from 0x2000 to 0x3FFF 
     bus.attach(ppu, 0x2000, 0x2000);
+
+    // Attach the APU to the bus at address 0x4000.
+    // The APU registers are mirrored every 8 bytes from 0x4000 to 0x4017. 
+    // We mirror the APU registers to 0x4018-0x4100.
+    bus_device_t apu = apu_device_create();
+    bus.attach(apu, 0x4000, 0x100);
+
+    struct apu_device_tick_state_data apu_tick_state = {};
     
     // Load the test ROM file
     for (size_t test_idx = 0; test_idx < sizeof(s_test_rom_files) / sizeof(s_test_rom_files[0]); test_idx++)
@@ -111,13 +222,14 @@ int main()
         for (unsigned tickcount = 0;; tickcount++)
         {
             clock_gettime(CLOCK_MONOTONIC, &ts_start);
-
+            
             // PPU divides the master clock by 4
             if ((tickcount % 4) == 0)
             {
-                ppu_device_tick(ppu, &nmi);
+                ppu_device_tick(ppu, ppu_frame_render, renderer, &nmi);
             }
 
+            
             // CPU divides the master clock by 12
             if ((tickcount % 12) == 0)
             {
@@ -126,14 +238,38 @@ int main()
                     cpu.nmi();
                     nmi = 0;
                 }
-
+                
                 cpu.tick(&bus);
+                
+                apu_device_tick(apu, &bus, &apu_tick_state);
+                
+                if (apu_tick_state.out.poll_joypad)
+                {
+                    const Uint8 *state = SDL_GetKeyboardState(NULL);
+                    apu_tick_state.in.joypad1.button.select = state[SDL_SCANCODE_S]; // Set joypad 1 to all buttons released
+                    apu_tick_state.in.joypad1.button.start = state[SDL_SCANCODE_RETURN];
+                    apu_tick_state.in.joypad1.button.up = state[SDL_SCANCODE_UP];
+                    apu_tick_state.in.joypad1.button.down = state[SDL_SCANCODE_DOWN];
+                    apu_tick_state.in.joypad1.button.left = state[SDL_SCANCODE_LEFT];
+                    apu_tick_state.in.joypad1.button.right = state[SDL_SCANCODE_RIGHT];
+                    apu_tick_state.in.joypad1.button.a = state[SDL_SCANCODE_Z];
+                    apu_tick_state.in.joypad1.button.b = state[SDL_SCANCODE_X];
+                }
+
+                if (apu_tick_state.out.oam_dma)
+                {
+                    // Handle OAM DMA transfer
+                    apu_tick_state.out.oam_dma = 0;
+                    // Stall the CPU for 513/514 cycles, the actual "DMA" transfer will be performed in the APU
+                    cpu.stall(cpu.m_tickcount & 1 ? 513 : 514); 
+                }
+
             }
 
             clock_gettime(CLOCK_MONOTONIC, &ts_end);
 
             // Simplified elapsed time calculation
-            uint64_t elapsed_ns = (ts_end.tv_sec - ts_start.tv_sec) * 1000000000 + (ts_end.tv_nsec - ts_start.tv_nsec);
+            uint64_t elapsed_ns =  (ts_end.tv_nsec - ts_start.tv_nsec);
 
             // Sleep for the remaining time to maintain the tick duration
             if (elapsed_ns < tick_duration_ns)
@@ -142,11 +278,27 @@ int main()
                     .tv_sec = 0,
                     .tv_nsec = (long)(tick_duration_ns - elapsed_ns)
                 };
-                //nanosleep(&ts_sleep, NULL);
+                // Sleep for the remaining time
+                // nanosleep(&ts_sleep, NULL);
+                sched_yield();
             }
         }
-
     }
+
+    if (renderer)
+    {
+        // Destroy SDL renderer
+        SDL_DestroyRenderer(renderer);
+    }
+
+    if (window)
+    {
+        // Destroy SDL window
+        SDL_DestroyWindow(window);
+    }
+
+    // Quit SDL
+    SDL_Quit();
     
     return 0;
 }

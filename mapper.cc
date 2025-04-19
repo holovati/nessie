@@ -43,7 +43,7 @@ mapper_return_t mapper_map_ines(ines_header_t a_ines_hdr, bus_t a_bus, bus_devic
         // Extract mapper number from flags 6 and 7
         uint8_t mapper = (a_ines_hdr->m_flags_6 >> 4) | (a_ines_hdr->m_flags_7 & 0xF0);
 
-        if ((a_ines_hdr->m_flags_6 >> 4) != s_mapper_ids[i])
+        if (mapper != s_mapper_ids[i])
         {
             continue;
         }

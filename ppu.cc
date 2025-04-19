@@ -1,8 +1,7 @@
 #include "ppu.h"
 #include "bus.h"
 
-#include <SDL2/SDL.h>
-#include <stdlib.h>
+#include <malloc.h>
 #include <assert.h>
 
 // The PPU addresses a 14-bit (16kB) address space, $0000-$3FFF, completely separate from the CPU's address bus.
@@ -20,18 +19,16 @@
 // $3F00-$3F1F     $0020    Palette RAM indexes      Internal to PPU
 // $3F20-$3FFF     $00E0    Mirrors of $3F00-$3F1F   Internal to PPU
 
+
+#define PPU_FRAME_VISIBLE_WIDTH 256
+
+#define PPU_FRAME_VISIBLE_HEIGHT 240
+
 #define DEVICE_TO_PPU(p) ((ppu_device_t)(p))
 
 #define PPU_FETCH_CYCLE(ppu) (((ppu->m_cycle - 1) & 7))
 
 typedef struct ppu_device_data *ppu_device_t;
-
-typedef struct rgb_color_data
-{
-    uint8_t r;
-    uint8_t g;
-    uint8_t b;
-} *rgb_color_t;
 
 union vram_adress
 {
@@ -46,6 +43,24 @@ union vram_adress
     };
     uint16_t raw;
 };
+
+struct oam_sprite_attr
+{
+    uint8_t pallete : 2; // Palette number
+    uint8_t is_sprite_zero : 1; // Sprite is sprite zero (unofficial)
+    uint8_t unimplmented : 2; // Unused
+    uint8_t priority : 1; // 0=above, 1=behind
+    uint8_t flip_x : 1; // Flip vertically
+    uint8_t flip_y : 1; // Flip horizontally
+};
+
+typedef struct oam_sprite_data 
+{
+    uint8_t y;
+    uint8_t id;
+    struct oam_sprite_attr attr;
+    uint8_t x;
+} *oam_sprite_t;
 
 struct ppu_device_data
 {
@@ -128,20 +143,35 @@ struct ppu_device_data
     uint32_t m_cycle;    // 0-340
     uint32_t m_scanline; // 0-261, 0-239=visible, 240=post, 241-260=vblank, 261=pre
 
-    uint8_t m_oam[0x100]; // OAM data
+    union 
+    {
+        struct oam_sprite_data oam[64]; // OAM data
+        uint8_t raw [0x100]; // raw oam bytes
+    } m_primary_oam;
+    uint8_t m_primary_oam_idx; // Index into primary OAM
+
+    union
+    {
+        struct oam_sprite_data oam[8]; // Sprite data
+        uint8_t raw [0x20]; // raw oam bytes
+    } m_secondary_oam;
+    uint8_t m_secondary_oam_idx; // Index into secondary OAM
+
+    uint8_t sprite_shift_pat_lo[8]; // Low bits of sprite pattern data
+    uint8_t sprite_shift_pat_hi[8]; // High bits of sprite pattern data
+    uint8_t sprite_x_counter[8];     // X position counters for each sprite
+    struct oam_sprite_attr sprite_attributes[8];    // Attributes for each sprite
+    uint8_t m_nsprites; // Number of sprites on the current scanline
 
     uint8_t m_palette[32]; // Palette memory
 
     struct bus_data m_bus;
 
-    struct rgb_color_data frame[256][240]; // Frame buffer
-
-    SDL_Window *m_window;     // SDL window
-    SDL_Renderer *m_renderer; // SDL renderer
+    struct ppu_rgb_color_data frame[PPU_FRAME_VISIBLE_WIDTH * PPU_FRAME_VISIBLE_HEIGHT]; // Frame buffer
 };
 
 // Standard NES palette (RGB values)
-static struct rgb_color_data const s_nes_palette[64] =
+static struct ppu_rgb_color_data const s_nes_palette[64] =
 {
     { 84,  84,  84}, {  0,  30, 116}, {  8,  16, 144}, { 48,   0, 136}, { 68,   0, 100}, { 92,   0,  48}, { 84,   4,   0}, { 60,  24,   0},
     { 32,  42,   0}, {  8,  58,   0}, {  0,  64,   0}, {  0,  60,   0}, {  0,  50,  60}, {  0,   0,   0}, {  0,   0,   0}, {  0,   0,   0},
@@ -184,12 +214,12 @@ static void ppu_oamaddr_write(ppu_device_t a_ppu, uint8_t a_value)
 
 static uint8_t ppu_oamdata_read(ppu_device_t a_ppu)
 {
-    return a_ppu->m_oam[a_ppu->m_registers.oamaddr];
+    return a_ppu->m_primary_oam.raw[a_ppu->m_registers.oamaddr];
 }
 
 static void ppu_oamdata_write(ppu_device_t a_ppu, uint8_t a_value)
 {
-    a_ppu->m_oam[a_ppu->m_registers.oamaddr] = a_value;
+    a_ppu->m_primary_oam.raw[a_ppu->m_registers.oamaddr++] = a_value;
 }
 
 static void ppu_scroll_write(ppu_device_t a_ppu, uint8_t a_value)
@@ -236,11 +266,6 @@ static uint8_t ppu_data_read(ppu_device_t a_ppu)
     // Special case for palette memory
     if (addr >= 0x3F00 && addr < 0x4000)
     {
-        // Palette reads are not buffered
-        if ((addr & 0x3F10) == 0x3F10)
-        {
-            addr &= 0x3F0F;
-        }
         result = a_ppu->m_palette[addr & 0x1F];
     }
     else
@@ -263,14 +288,21 @@ static void ppu_data_write(ppu_device_t a_ppu, uint8_t a_value)
     // Special case for palette memory
     if (addr >= 0x3F00 && addr < 0x4000)
     {
+        //printf("Palette write: Addr=%04X, Value=%02X\n", addr, a_value);
+        addr &= 0x1f;
+        uint16_t addr_mirror = addr;
 
-        // Palette reads are not buffered
-        if ((addr & 0x3F10) == 0x3F10)
-        {
-            addr &= 0x3F0F;
-        }
+		if (addr == 0x0010) addr_mirror = 0x0000;
+		if (addr == 0x0014) addr_mirror = 0x0004;
+		if (addr == 0x0018) addr_mirror = 0x0008;
+		if (addr == 0x001C) addr_mirror = 0x000C;
+        if (addr == 0x0000) addr_mirror = 0x0010;
+        if (addr == 0x0004) addr_mirror = 0x0014;
+        if (addr == 0x0008) addr_mirror = 0x0018;
+        if (addr == 0x000C) addr_mirror = 0x001C;
 
-        a_ppu->m_palette[addr & 0x1f] = a_value;
+        a_ppu->m_palette[addr_mirror] = a_ppu->m_palette[addr] = a_value;
+        //printf("-Palette write: Addr=%04X, Value=%02X\n", addr, a_value);
     }
     else
     {
@@ -379,6 +411,24 @@ static void ppu_update_shift_registers(ppu_device_t a_ppu)
             }
         }
     }
+
+    if (a_ppu->m_registers.mask.sprites && (a_ppu->m_scanline < 240) && (a_ppu->m_cycle >= 1 && a_ppu->m_cycle <= 256))
+    {        
+        // Update sprite registers
+        for (uint8_t i = 0; i < a_ppu->m_nsprites; i++)
+        {
+            if (a_ppu->sprite_x_counter[i] > 0)
+            {
+                a_ppu->sprite_x_counter[i]--;
+            }
+            else
+            {
+                // Shift sprite registers
+                a_ppu->sprite_shift_pat_lo[i] <<= 1;
+                a_ppu->sprite_shift_pat_hi[i] <<= 1;
+            }
+        }
+    }
 }
 
 static void ppu_vram_fetch_tick(ppu_device_t a_ppu)
@@ -435,9 +485,7 @@ static void ppu_scanline_pre_render(ppu_device_t a_ppu)
     if (a_ppu->m_cycle == 1)
     {
         a_ppu->m_registers.status.vblank = 0;
-        a_ppu->m_registers.status.sprite_overflow = 0;
         a_ppu->m_registers.status.sprite_zero_hit = 0;
-
     }
     else if (a_ppu->m_cycle <= 256 || (a_ppu->m_cycle >= 321 && a_ppu->m_cycle <= 336))
     {
@@ -461,16 +509,142 @@ static void ppu_scanline_pre_render(ppu_device_t a_ppu)
     }
 }
 
+static void ppu_sprite_evaluate(ppu_device_t a_ppu) /* Executed from cycle 1 to 256 */
+{
+    if (a_ppu->m_cycle <= 64)
+    {
+        if (a_ppu->m_secondary_oam_idx < 32)
+        {
+            // Clear the secondary OAM
+            a_ppu->m_secondary_oam.raw[a_ppu->m_secondary_oam_idx++] = 0xFF;
+        }
+    }
+    else if (a_ppu->m_cycle == 65)
+    {
+        // Reset primary OAM index
+        a_ppu->m_primary_oam_idx = 0;
+        // Reset secondary OAM index
+        a_ppu->m_secondary_oam_idx = 0;
+
+        a_ppu->m_registers.status.sprite_overflow = 0;
+    }
+    else if (a_ppu->m_cycle < 130)
+    {        
+        // Read sprite data from primary OAM
+        oam_sprite_t sprite = &a_ppu->m_primary_oam.oam[a_ppu->m_primary_oam_idx++];
+        
+        if ((sprite->y + 1) < 240) 
+        {
+            uint32_t sprite_yend = sprite->y + (a_ppu->m_registers.ctrl.sprite_size ? 16 : 8);
+            
+            // Check if the sprite is within the current scanline
+            if ((a_ppu->m_scanline >= sprite->y) && (a_ppu->m_scanline < sprite_yend))
+            {
+                if (a_ppu->m_secondary_oam_idx < 8)
+                {
+                    // Copy sprite data to secondary OAM
+                    a_ppu->m_secondary_oam.oam[a_ppu->m_secondary_oam_idx] = *sprite;
+                    a_ppu->m_secondary_oam.oam[a_ppu->m_secondary_oam_idx++].attr.is_sprite_zero = (a_ppu->m_primary_oam_idx - 1) == 0;
+                }
+                else
+                {
+                    // Set sprite overflow flag if more than 8 sprites are found
+                    a_ppu->m_registers.status.sprite_overflow = 1;
+                }
+            }
+        }
+
+        a_ppu->m_primary_oam_idx &= 0x3F; // Wrap around primary OAM index
+    }
+}
+
+static uint8_t reverse_bits(uint8_t value)
+{
+    value = ((value & 0xF0) >> 4) | ((value & 0x0F) << 4);
+    value = ((value & 0xCC) >> 2) | ((value & 0x33) << 2);
+    value = ((value & 0xAA) >> 1) | ((value & 0x55) << 1);
+    return value;
+}
+
+static void ppu_sprite_fetch(ppu_device_t a_ppu) 
+{
+    if (PPU_FETCH_CYCLE(a_ppu))
+    {
+        return;
+    }
+    
+    // Every 8 cycles, starting from cycle 257. Will fetch sprite data for the current scanline.
+
+    if (a_ppu->m_secondary_oam_idx < a_ppu->m_nsprites)
+    {
+        oam_sprite_t sprite = &a_ppu->m_secondary_oam.oam[a_ppu->m_secondary_oam_idx];
+
+        //printf("Sprite %d: ID=%X, Y=%d, X=%d, Attr=%d\n", a_ppu->m_secondary_oam_idx, sprite->id, sprite->y, sprite->x, sprite->attr);
+
+        uint16_t addr = 0x0000;
+
+        if (a_ppu->m_registers.ctrl.sprite_size)
+        {
+            // 8x16 sprite
+            asm volatile("int3");
+        }
+        else
+        {
+            addr = (a_ppu->m_registers.ctrl.sprite_table << 12) | (sprite->id << 4);
+            // 8x8 sprite
+            if (sprite->attr.flip_y)
+            {
+                addr |= (7 - (a_ppu->m_scanline - sprite->y));
+            }
+            else
+            {
+                addr |= ((a_ppu->m_scanline) - sprite->y);
+            }
+        }
+
+        // Read sprite pattern data
+        a_ppu->sprite_shift_pat_lo[a_ppu->m_secondary_oam_idx] = a_ppu->m_bus.read8(addr);
+        a_ppu->sprite_shift_pat_hi[a_ppu->m_secondary_oam_idx] = a_ppu->m_bus.read8(addr + 8);
+
+        if (sprite->attr.flip_x)
+        {
+            // Flip sprite pattern data horizontally
+            a_ppu->sprite_shift_pat_lo[a_ppu->m_secondary_oam_idx] = reverse_bits(a_ppu->sprite_shift_pat_lo[a_ppu->m_secondary_oam_idx]);
+            a_ppu->sprite_shift_pat_hi[a_ppu->m_secondary_oam_idx] = reverse_bits(a_ppu->sprite_shift_pat_hi[a_ppu->m_secondary_oam_idx]);
+        }
+
+        // Read sprite attribute data
+        a_ppu->sprite_attributes[a_ppu->m_secondary_oam_idx] = sprite->attr;
+        // Read sprite X position
+        a_ppu->sprite_x_counter[a_ppu->m_secondary_oam_idx] = sprite->x;
+        
+        a_ppu->m_secondary_oam_idx++;
+    }
+}
+
 static void ppu_scanline_visible(ppu_device_t a_ppu)
 {
     if (a_ppu->m_cycle <= 256 || (a_ppu->m_cycle >= 321 && a_ppu->m_cycle <= 336))
     {
+        if (a_ppu->m_cycle <= 256)
+        {
+            ppu_sprite_evaluate(a_ppu);
+        }
         ppu_update_shift_registers(a_ppu);
         ppu_vram_fetch_tick(a_ppu);
     }
     else if (a_ppu->m_cycle == 257)
     {
         ppu_t_to_v_horizontal(a_ppu);
+
+        a_ppu->m_nsprites = a_ppu->m_secondary_oam_idx;
+        a_ppu->m_secondary_oam_idx = 0;
+
+        ppu_sprite_fetch(a_ppu);
+    }
+    else if (a_ppu->m_cycle <= 320)
+    {
+        ppu_sprite_fetch(a_ppu);
     }
 
     // Check if rendering is enabled
@@ -492,29 +666,83 @@ static void ppu_scanline_visible(ppu_device_t a_ppu)
         {
             // Get pattern bits
             uint16_t bit_mux = 0x8000 >> a_ppu->fine_x;
-            uint8_t pixel_lo = (a_ppu->bg_shift_pat_lo & bit_mux) ? 1 : 0;
-            uint8_t pixel_hi = (a_ppu->bg_shift_pat_hi & bit_mux) ? 2 : 0;
-            bg_pixel = pixel_hi | pixel_lo;
+            uint8_t pixel_lo = !!(a_ppu->bg_shift_pat_lo & bit_mux);
+            uint8_t pixel_hi = !!(a_ppu->bg_shift_pat_hi & bit_mux);
+            bg_pixel = (pixel_hi << 1) | pixel_lo;
 
             // Get palette bits
-            uint8_t palette_lo = (a_ppu->bg_shift_at_lo & bit_mux) ? 1 : 0;
-            uint8_t palette_hi = (a_ppu->bg_shift_at_hi & bit_mux) ? 2 : 0;
-            bg_palette = palette_hi | palette_lo;
+            uint8_t palette_lo = !!(a_ppu->bg_shift_at_lo & bit_mux);
+            uint8_t palette_hi = !!(a_ppu->bg_shift_at_hi & bit_mux);
+            bg_palette = (palette_hi << 1) | palette_lo;
         }
+
+        // Determine sprite pixel
+        uint8_t fg_pixel = 0;
+        uint8_t fg_palette = 0;
+        uint8_t fg_priority = 0;
+        uint8_t fg_sprite_zero = 0;
+
+        if (a_ppu->m_registers.mask.sprites)
+        {
+            for (int i = 0; i < a_ppu->m_nsprites; i++)
+            {
+                if ((a_ppu->sprite_x_counter[i] == 0))
+                {
+                    // Get sprite pattern bits
+                    uint8_t pixel_lo = a_ppu->sprite_shift_pat_lo[i] >> 7;
+                    uint8_t pixel_hi = a_ppu->sprite_shift_pat_hi[i] >> 7;
+                    fg_pixel = (pixel_hi << 1) | pixel_lo;
+                    
+                    // Check if sprite is visible
+                    if (fg_pixel != 0)
+                    {
+                        fg_palette = a_ppu->sprite_attributes[i].pallete + 4; // Sprite palettes are in the range 4-7
+                        fg_priority = !a_ppu->sprite_attributes[i].priority;
+                        fg_sprite_zero = a_ppu->sprite_attributes[i].is_sprite_zero;
+                        break; // Found a sprite pixel
+                    }
+                }
+            }
+        }
+        // Select final pixel based on priority rules 
+        uint8_t final_pixel = 0; // Transparent pixel
+        uint8_t final_palette = 0;
+
+        if (bg_pixel == 0 && a_ppu->m_registers.mask.sprites)
+        {
+            // Background pixel is transparent
+            final_pixel = fg_pixel;
+            final_palette = fg_palette;
+        }
+        else if (fg_pixel == 0)
+        {
+            // Sprite pixel is transparent
+            final_pixel = bg_pixel;
+            final_palette = bg_palette;
+        }
+        else
+        {
+            // Both pixels are visible, select based on priority
+            if (fg_priority)
+            {
+                final_pixel = fg_pixel;
+                final_palette = fg_palette;
+            }
+            else
+            {
+                final_pixel = bg_pixel;
+                final_palette = bg_palette;
+            }
+            
+            a_ppu->m_registers.status.sprite_zero_hit |= fg_sprite_zero;
+        }
+        
 
         if (!a_ppu->m_registers.mask.background_leftmost && (a_ppu->m_cycle <= 8))
         {
             // Disable background for leftmost 8 pixels
-            bg_pixel = 0;
+            final_pixel = 0;
         }
-
-        // (Add sprite pixel determination here)
-
-        // Select final pixel based on priority rules 
-        uint8_t final_pixel = bg_pixel;
-        uint8_t final_palette = bg_palette;
-
-        // (Add sprite priority logic here)
 
         // Get color from palette
         uint16_t color_address;
@@ -529,53 +757,23 @@ static void ppu_scanline_visible(ppu_device_t a_ppu)
             color_address = 0x3F00 + (final_palette << 2) + final_pixel;
         }
 
-        uint8_t color_value = a_ppu->m_palette[color_address & 0x1F];
+        uint8_t color_value = a_ppu->m_palette[color_address & 0x1F] & 0x3F; // Mask to 6 bits
 
         // Convert to RGB using the NES palette
-        a_ppu->frame[a_ppu->m_scanline][a_ppu->m_cycle - 1] = s_nes_palette[color_value];
+        a_ppu->frame[(a_ppu->m_scanline * PPU_FRAME_VISIBLE_WIDTH) + (a_ppu->m_cycle - 1)] = s_nes_palette[color_value];
+    
     }
 }
 
-static void ppu_scanline_post_render(ppu_device_t a_ppu)
+static void ppu_scanline_post_render(ppu_device_t a_ppu, ppu_frame_callback_t a_frame_cb, void *a_frame_cb_data)
 {
     // Only render the frame at the end of the post-render scanline
-    if (a_ppu->m_cycle == 1)
+    if (a_ppu->m_cycle == 255)
     {
-        // Clear the renderer
-        SDL_SetRenderDrawColor(a_ppu->m_renderer, 0, 0, 0, 255);
-        SDL_RenderClear(a_ppu->m_renderer);
-
-        // Draw each pixel from the frame buffer to the SDL renderer
-        for (int y = 0; y < 240; y++)
+        // Call the frame callback if provided
+        if (a_frame_cb)
         {
-            for (int x = 0; x < 256; x++)
-            {
-                // Set the color for this pixel
-                SDL_SetRenderDrawColor(
-                    a_ppu->m_renderer,
-                    a_ppu->frame[y][x].r, // Red
-                    a_ppu->frame[y][x].g, // Green
-                    a_ppu->frame[y][x].b, // Blue
-                    255                   // Alpha (opaque)
-                );
-
-                // Draw the pixel
-                SDL_RenderDrawPoint(a_ppu->m_renderer, x, y);
-            }
-        }
-
-        // Present the renderer (show the frame)
-        SDL_RenderPresent(a_ppu->m_renderer);
-
-        // Process any pending SDL events to keep the window responsive
-        SDL_Event event;
-        while (SDL_PollEvent(&event))
-        {
-            if (event.type == SDL_QUIT)
-            {
-                // Handle quit event if needed
-                // You could set a flag to signal the emulator to shut down
-            }
+            a_frame_cb((ppu_rgb_color_t)a_ppu->frame, a_frame_cb_data);
         }
     }
 }
@@ -602,7 +800,7 @@ static void ppu_scanline_idle_cycle(ppu_device_t a_ppu)
 {
 }
 
-static void ppu_scanline(ppu_device_t a_ppu, uint32_t *a_nmi_out)
+static void ppu_scanline(ppu_device_t a_ppu, ppu_frame_callback_t a_frame_cb, void *a_user_data, uint32_t *a_nmi_out)
 {
     if (a_ppu->m_scanline < 240) // Render scanlines
     {
@@ -610,7 +808,7 @@ static void ppu_scanline(ppu_device_t a_ppu, uint32_t *a_nmi_out)
     }
     else if (a_ppu->m_scanline == 240) // Post-render scanline
     {
-        ppu_scanline_post_render(a_ppu);
+        ppu_scanline_post_render(a_ppu, a_frame_cb, a_user_data);
     }
     else if (a_ppu->m_scanline < 261) // Vertical blanking line
     {
@@ -622,7 +820,7 @@ static void ppu_scanline(ppu_device_t a_ppu, uint32_t *a_nmi_out)
     }
 }
 
-void ppu_device_tick(bus_device_t a_ppu_device, uint32_t *a_nmi_out)
+void ppu_device_tick(bus_device_t a_ppu_device, ppu_frame_callback_t a_frame_cb, void *a_frame_cb_user_data, uint32_t *a_nmi_out)
 {
     ppu_device_t ppu = DEVICE_TO_PPU(a_ppu_device);
 
@@ -642,7 +840,7 @@ void ppu_device_tick(bus_device_t a_ppu_device, uint32_t *a_nmi_out)
     }
     else
     {
-        ppu_scanline(ppu, a_nmi_out);
+        ppu_scanline(ppu, a_frame_cb, a_frame_cb_user_data, a_nmi_out);
     }
 
     if (ppu->m_cycle < 341)
@@ -703,8 +901,6 @@ static void ppu_write8(bus_device_t a_dev, uint16_t a_addr, uint8_t a_value)
     case 7: // PPUDATA
         ppu_data_write(DEVICE_TO_PPU(a_dev), a_value);
         break;
-    default:
-        assert(0); // For debugging
     }
 }
 
@@ -716,38 +912,16 @@ static struct bus_device_ops_data g_ppu_ops =
 
 bus_device_t ppu_device_create()
 {
-    if (SDL_Init(SDL_INIT_VIDEO) != 0) // Initialize SDL
-    {
-        fprintf(stderr, "SDL_Init Error: %s\n", SDL_GetError());
-        return NULL;
-    }
-
     ppu_device_t ppu = (ppu_device_t)malloc(sizeof(ppu_device_data));
     *ppu = {};
     ppu->m_device.m_ops = &g_ppu_ops;
 
+    for (int i = 0; i < 0x100; i++)
+    {
+        ppu->m_primary_oam.raw[i] = 0xFF;
+    }
+
     ppu->m_bus.initialize();
-
-    // Create SDL window
-    ppu->m_window = SDL_CreateWindow("PPU Window", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 256, 240, SDL_WINDOW_SHOWN);
-    if (!ppu->m_window)
-    {
-        fprintf(stderr, "SDL_CreateWindow Error: %s\n", SDL_GetError());
-        free(ppu);
-        SDL_Quit();
-        return NULL;
-    }
-
-    // Create SDL renderer
-    ppu->m_renderer = SDL_CreateRenderer(ppu->m_window, -1, SDL_RENDERER_PRESENTVSYNC);
-    if (!ppu->m_renderer)
-    {
-        fprintf(stderr, "SDL_CreateRenderer Error: %s\n", SDL_GetError());
-        SDL_DestroyWindow(ppu->m_window);
-        free(ppu);
-        SDL_Quit();
-        return NULL;
-    }
 
     return &ppu->m_device;
 }
@@ -756,20 +930,5 @@ void ppu_device_destroy(bus_device_t a_ppu_device)
 {
     ppu_device_t ppu = DEVICE_TO_PPU(a_ppu_device);
 
-    if (ppu->m_renderer)
-    {
-        // Destroy SDL renderer
-        SDL_DestroyRenderer(ppu->m_renderer);
-    }
-
-    if (ppu->m_window)
-    {
-        // Destroy SDL window
-        SDL_DestroyWindow(ppu->m_window);
-    }
-
     free(ppu);
-
-    // Quit SDL
-    SDL_Quit();
 }

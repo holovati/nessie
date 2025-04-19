@@ -1411,11 +1411,18 @@ void cpu_data::power_on(bus_t a_bus)
     m_nmi = 0;
 
     m_remaining_cycles = 0;
+
+    m_tickcount = 0;
 }
 
 void cpu_data::nmi()
 {
     m_nmi = 1;
+}
+
+void cpu_data::stall(uint32_t a_cycles)
+{
+    m_remaining_cycles += a_cycles;
 }
 
 //#define DEBUG
@@ -1426,6 +1433,8 @@ void cpu_data::nmi()
 
 void cpu_data::tick(bus_t a_bus)
 {
+    m_tickcount++;
+
     if (m_remaining_cycles)
     {
         m_remaining_cycles--;

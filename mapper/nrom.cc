@@ -41,7 +41,7 @@ mapper_return_t NROM_probe_ines(ines_header_t a_ines_hdr)
     
     if (a_ines_hdr->m_chr_rom_size == 0)
     {
-        return MAPPER_INES_VALUE_INVALID;
+        // return MAPPER_INES_VALUE_INVALID;
     }
 
     return MAPPER_OK;
@@ -106,8 +106,11 @@ mapper_return_t NROM_map_ines(ines_header_t a_ines_hdr, bus_t a_bus, bus_device_
     // Attach the CHR ROM to the bus at address 0x0000
     ppu_device_attach(a_ppu, chr_rom_pattern_table_0, 0x0000, 0x1000);
 
-    // Copy the first 4 KiB of the CHR ROM to the CHR ROM device
-    ram_device_write_buffer(chr_rom_pattern_table_0, 0, chr_rom, 0x1000);
+    if (chr_rom_size_in_bytes > 0)
+    {
+        // Copy the first 4 KiB of the CHR ROM to the CHR ROM device
+        ram_device_write_buffer(chr_rom_pattern_table_0, 0, chr_rom, 0x1000);
+    }
 
     // Create a CHR ROM device for pattern table 1
     bus_device_t chr_rom_pattern_table_1 = ram_device_create(0x1000);
@@ -115,9 +118,11 @@ mapper_return_t NROM_map_ines(ines_header_t a_ines_hdr, bus_t a_bus, bus_device_
     // Attach the CHR ROM to the bus at address 0x1000
     ppu_device_attach(a_ppu, chr_rom_pattern_table_1, 0x1000, 0x1000);
 
-    // Copy the last 4 KiB of the CHR ROM to the CHR ROM device
-    ram_device_write_buffer(chr_rom_pattern_table_1, 0, chr_rom + 0x1000, 0x1000);
-
+    if (chr_rom_size_in_bytes > 0)
+    {
+        // Copy the last 4 KiB of the CHR ROM to the CHR ROM device
+        ram_device_write_buffer(chr_rom_pattern_table_1, 0, chr_rom + 0x1000, 0x1000);
+    }
     // Create the 2 nametable devices
     /*
           (0,0)     (256,0)     (511,0)

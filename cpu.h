@@ -32,9 +32,13 @@ struct cpu_data
 
     uint32_t m_remaining_cycles;
 
+    uint32_t m_tickcount;
+
     void power_on(bus_t a_bus);
 
     void nmi();
 
+    void stall(uint32_t a_cycles);
+    
     void tick(bus_t a_bus);
 };
