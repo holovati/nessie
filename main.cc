@@ -3,7 +3,10 @@
 #include <stdio.h>
 #include <utime.h>
 #include <time.h>
+
+#ifndef __emerixx__
 #include <SDL2/SDL.h>
+#endif
 
 #include "apu.h"
 #include "cpu.h"
@@ -56,6 +59,8 @@ static char const  * const s_test_rom_files[] = {
 
 static void ppu_frame_render(ppu_rgb_color_t a_frame, void *a_context)
 {
+#ifndef __emerixx__
+
     // Cast the context to SDL_Renderer
     SDL_Renderer *renderer = (SDL_Renderer *)a_context;
 
@@ -101,12 +106,13 @@ static void ppu_frame_render(ppu_rgb_color_t a_frame, void *a_context)
             // You could set a flag to signal the emulator to shut down
         }
     }
+#endif
 }
 
 int main()
 {
     setvbuf(stdout, NULL, _IONBF, 0); // Disable buffering for stdout
-
+#ifndef __emerixx__
     if (SDL_Init(SDL_INIT_VIDEO) != 0) // Initialize SDL
     {
         fprintf(stderr, "SDL_Init Error: %s\n", SDL_GetError());
@@ -299,6 +305,6 @@ int main()
 
     // Quit SDL
     SDL_Quit();
-    
+#endif
     return 0;
 }

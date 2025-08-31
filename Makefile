@@ -1,6 +1,9 @@
 CXX := g++
 CXXFLAGS := -Wall -Wextra -Wno-unused -g -std=c++17 -I.
+
+ifndef EMERIXX
 LDFLAGS := -lSDL2
+endif
 
 SRCS := $(wildcard *.cc) $(wildcard mapper/*.cc)
 OBJS := $(SRCS:.cc=.o)
